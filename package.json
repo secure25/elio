@@ -1,0 +1,32 @@
+{
+  "name": "elio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A self-hosted, fully functional Elio personal AI agent",
+  "scripts": {
+    "dev": "next dev -p 3210",
+    "build": "next build",
+    "start": "next start -p 3210",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "setup:browser": "node scripts/ensure-playwright.mjs",
+    "setup:voice": "node scripts/setup-voice.mjs"
+  },
+  "dependencies": {
+    "exa-js": "^2.22.2",
+    "lucide-react": "^0.525.0",
+    "next": "^15.3.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.10",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "playwright-core": "^1.53.0",
+    "tailwindcss": "^4.1.10",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.0"
+  }
+}

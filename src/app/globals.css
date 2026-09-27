@@ -1,0 +1,207 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #F7F5F0;
+  --panel: #FCFBF8;
+  --panel-2: #F2EFE9;
+  --border: #DDDCD5;
+  --border-subtle: #E8E6DF;
+  --text: #202622;
+  --muted: #69706A;
+  --accent: #6D806C;
+  --accent-dark: #4D5E4C;
+  --accent-light: #EAEFE9;
+  --action: #B8654B;
+  --action-dark: #9E523A;
+  --action-light: #F7EDE9;
+  --ok: #5A7B58;
+  --warn: #C97A3E;
+  --danger: #B8654B;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* ── Mobile ergonomics ──────────────────────────────────────────────── */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS Safari auto-zooms any focused input with font-size < 16px —
+   bump all text entry to 16px on touch-sized screens. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Notch / home-indicator safe areas */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+/* Horizontally scrollable wide content (lists, grids, code) on small screens */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+* {
+  border-color: var(--border);
+}
+
+.font-editorial {
+  font-family: ui-serif, "Newsreader", "Playfair Display", Georgia, Cambria, "Times New Roman", Times, serif;
+  letter-spacing: -0.015em;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #D5D3CC;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.panel-muted {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn:hover {
+  border-color: #C5C3BC;
+  background: #F4F1EA;
+}
+
+.btn-primary {
+  background: var(--action);
+  border: 1px solid var(--action);
+  color: #FFFFFF;
+}
+.btn-primary:hover {
+  background: var(--action-dark);
+  border-color: var(--action-dark);
+}
+
+.btn-moss {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #FFFFFF;
+}
+.btn-moss:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+
+.btn-approve {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #FFFFFF;
+}
+.btn-approve:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+
+.btn-deny {
+  background: transparent;
+  border: 1px solid var(--action);
+  color: var(--action);
+}
+.btn-deny:hover {
+  background: var(--action-light);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 13px;
+  color: var(--text);
+  font-size: 13.5px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.input:focus {
+  border-color: var(--accent);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--panel);
+}
+
+.chip-moss {
+  background: var(--accent-light);
+  border-color: #D2DDD0;
+  color: #435442;
+}
+
+.chip-terracotta {
+  background: var(--action-light);
+  border-color: #F1D9CF;
+  color: var(--action);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.step-line {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin-left: 6px;
+}
