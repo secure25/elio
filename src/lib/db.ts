@@ -5,13 +5,27 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 const dataDir = process.env.ELIO_DATA_DIR || process.env.MUSE_DATA_DIR || path.join(process.cwd(), "data");
-fs.mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dataDir, "muse.db"));
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
+// ── Lazy, build-safe database open ────────────────────────────────────────
+// `next build` imports every route while collecting page data; opening
+// SQLite and running DDL at module-import time made Next's parallel build
+// workers race on the same database file ("database is locked",
+// ERR_SQLITE_ERROR 5). The connection is therefore opened and the schema
+// ensured on first *use* — i.e. at request time on the server — never at
+// import time. Runtime behavior is unchanged: same file, same pragmas,
+// same idempotent schema.
+let _db: DatabaseSync | null = null;
 
-db.exec(`
+function openDb(): DatabaseSync {
+  if (_db) return _db;
+  fs.mkdirSync(dataDir, { recursive: true });
+  const d = new DatabaseSync(path.join(dataDir, "muse.db"));
+  d.exec("PRAGMA journal_mode = WAL;");
+  d.exec("PRAGMA foreign_keys = ON;");
+  // Bound how long a writer waits on a transient lock instead of failing
+  // immediately (scheduler, agent runs and requests share one process).
+  d.exec("PRAGMA busy_timeout = 5000;");
+  d.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
@@ -159,7 +173,21 @@ CREATE TABLE IF NOT EXISTS monitors (
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_steps_task ON task_steps(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
-`);
+  `);
+  _db = d;
+  return d;
+}
+
+// Type-preserving lazy handle: `db` keeps its DatabaseSync type so every
+// existing consumer (db.prepare().get()/all()/run(), db.exec, …) works
+// unchanged; the real connection opens on the first property access.
+export const db = new Proxy({} as DatabaseSync, {
+  get(_target, prop) {
+    const d = openDb();
+    const value = Reflect.get(d, prop);
+    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(d) : value;
+  },
+});
 
 export const now = () => Date.now();
 export const uuid = () => randomUUID();
