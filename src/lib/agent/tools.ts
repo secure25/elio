@@ -1,4 +1,7 @@
 // ── Tool registry: schemas the model sees, wired to real connector functions ──
+// Descriptions are intentionally terse: they are prefilled on every agent call
+// (schema cost dominates CPU-only prefill), so keep only behaviorally load-bearing
+// info — approval flags, owner-only scoping, time/enum syntax, the refs contract.
 import type { ToolDef } from "../llm/types";
 
 export interface ToolContext {
@@ -12,39 +15,37 @@ export interface AgentTool {
 }
 
 const str = (desc: string) => ({ type: "string", description: desc });
+const s = () => ({ type: "string" });
 
 export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "web_search",
-      description:
-        "Search the public web. Returns result titles + URLs, often with query-relevant highlights (short excerpts) you can read directly. Use for research, prices, facts.",
-      parameters: { type: "object", properties: { query: str("Search query") }, required: ["query"] },
+      description: "Search the public web; returns titles, URLs, and short excerpts.",
+      parameters: { type: "object", properties: { query: s() }, required: ["query"] },
     },
     run: (ctx, a) => import("../connectors/web").then((m) => m.webSearch(ctx.taskId, a.query)),
   },
   {
     def: {
       name: "web_fetch",
-      description: "Fetch a URL and return its readable text content.",
-      parameters: { type: "object", properties: { url: str("Full URL to fetch") }, required: ["url"] },
+      description: "Fetch a URL and return its readable text.",
+      parameters: { type: "object", properties: { url: s() }, required: ["url"] },
     },
     run: (ctx, a) => import("../connectors/web").then((m) => m.webFetch(ctx.taskId, a.url)),
   },
   {
     def: {
       name: "browser_goto",
-      description:
-        "Open a URL in the sandboxed browser VM. Returns the accessibility tree with element refs.",
-      parameters: { type: "object", properties: { url: str("URL to open") }, required: ["url"] },
+      description: "Open a URL in the sandboxed browser; returns the accessibility tree with element refs.",
+      parameters: { type: "object", properties: { url: s() }, required: ["url"] },
     },
     run: (ctx, a) => import("../connectors/browser").then((m) => m.browserGoto(ctx.taskId, a.url)),
   },
   {
     def: {
       name: "browser_read",
-      description:
-        "Re-read the current page: title, URL, interactive elements with refs, and page structure.",
+      description: "Re-read the current page: title, URL, elements with refs.",
       parameters: { type: "object", properties: {} },
     },
     run: (ctx) => import("../connectors/browser").then((m) => m.browserRead(ctx.taskId)),
@@ -52,29 +53,24 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "browser_click",
-      description: "Click an element by its ref (e.g. e7) from the latest browser page state.",
-      parameters: { type: "object", properties: { ref: str("Element ref like e7") }, required: ["ref"] },
+      description: "Click an element by ref (e.g. e7) from the latest page state.",
+      parameters: { type: "object", properties: { ref: s() }, required: ["ref"] },
     },
     run: (ctx, a) => import("../connectors/browser").then((m) => m.browserClick(ctx.taskId, a.ref)),
   },
   {
     def: {
       name: "browser_fill",
-      description: "Type a value into an input element by ref. Value is redacted in logs.",
-      parameters: {
-        type: "object",
-        properties: { ref: str("Element ref"), value: str("Text to type") },
-        required: ["ref", "value"],
-      },
+      description: "Type a value into an input by ref; value is redacted in logs.",
+      parameters: { type: "object", properties: { ref: s(), value: s() }, required: ["ref", "value"] },
     },
     run: (ctx, a) => import("../connectors/browser").then((m) => m.browserFill(ctx.taskId, a.ref, a.value)),
   },
   {
     def: {
       name: "browser_submit",
-      description:
-        "Click a submit/checkout button. REQUIRES HUMAN APPROVAL — the Sentinel will pause for the user.",
-      parameters: { type: "object", properties: { ref: str("Submit button ref") }, required: ["ref"] },
+      description: "Click a submit/checkout button. REQUIRES HUMAN APPROVAL.",
+      parameters: { type: "object", properties: { ref: s() }, required: ["ref"] },
     },
     run: (ctx, a) =>
       import("../connectors/browser").then((m) =>
@@ -84,10 +80,10 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "gmail_list",
-      description: "List recent emails (filtered for OTP codes and reset links).",
+      description: "List recent emails (OTP codes and reset links are filtered out).",
       parameters: {
         type: "object",
-        properties: { query: str("Gmail search query, e.g. from:boss@x.com is:unread"), max: { type: "number", description: "Max results (default 10)" } },
+        properties: { query: str("Gmail query, e.g. from:boss@x.com is:unread"), max: { type: "number" } },
       },
     },
     run: (ctx, a) =>
@@ -98,23 +94,18 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "gmail_read",
-      description: "Read one email by id (OTP codes and reset links are filtered out).",
-      parameters: { type: "object", properties: { id: str("Message id from gmail_list") }, required: ["id"] },
+      description: "Read one email by id.",
+      parameters: { type: "object", properties: { id: s() }, required: ["id"] },
     },
     run: (ctx, a) => import("../connectors/gmail").then((m) => m.gmailRead(ctx.taskId, a.id)),
   },
   {
     def: {
       name: "gmail_send",
-      description:
-        "Send an email from the user's Gmail. REQUIRES HUMAN APPROVAL via the Sentinel.",
+      description: "Send an email from the user's Gmail. REQUIRES HUMAN APPROVAL.",
       parameters: {
         type: "object",
-        properties: {
-          to: str("Recipient email address"),
-          subject: str("Email subject"),
-          body: str("Plain-text body"),
-        },
+        properties: { to: s(), subject: s(), body: s() },
         required: ["to", "subject", "body"],
       },
     },
@@ -134,16 +125,16 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "calendar_create",
-      description: "Create a calendar event. REQUIRES HUMAN APPROVAL via the Sentinel.",
+      description: "Create a calendar event. REQUIRES HUMAN APPROVAL.",
       parameters: {
         type: "object",
         properties: {
-          summary: str("Event title"),
+          summary: s(),
           start: str("Start ISO datetime, e.g. 2026-09-21T15:00:00"),
-          end: str("End ISO datetime"),
-          description: str("Optional description"),
-          location: str("Optional location"),
-          attendees: { type: "array", items: { type: "string" }, description: "Optional attendee emails" },
+          end: s(),
+          description: s(),
+          location: s(),
+          attendees: { type: "array", items: { type: "string" } },
         },
         required: ["summary", "start", "end"],
       },
@@ -157,7 +148,7 @@ export const TOOLS: AgentTool[] = [
     def: {
       name: "calendar_delete",
       description: "Delete a calendar event by id. REQUIRES HUMAN APPROVAL.",
-      parameters: { type: "object", properties: { event_id: str("Event id") }, required: ["event_id"] },
+      parameters: { type: "object", properties: { event_id: s() }, required: ["event_id"] },
     },
     run: (ctx, a) =>
       import("../connectors/gcal").then((m) => m.calendarDelete(ctx.taskId, ctx.conversationId, a.event_id)),
@@ -166,12 +157,8 @@ export const TOOLS: AgentTool[] = [
     def: {
       name: "send_telegram",
       description:
-        "Send a Telegram message to the owner's connected chat (their own Telegram). REQUIRES HUMAN APPROVAL via the Sentinel. Only use for messages the user explicitly asked to send or confirmed.",
-      parameters: {
-        type: "object",
-        properties: { text: str("Message text to send") },
-        required: ["text"],
-      },
+        "Message the owner's own connected Telegram chat. REQUIRES HUMAN APPROVAL; only for sends the user explicitly requested or confirmed.",
+      parameters: { type: "object", properties: { text: s() }, required: ["text"] },
     },
     run: (ctx, a) =>
       import("../connectors/messaging").then((m) => m.sendTelegram(ctx.taskId, ctx.conversationId, a.text)),
@@ -180,12 +167,8 @@ export const TOOLS: AgentTool[] = [
     def: {
       name: "send_whatsapp",
       description:
-        "Send a WhatsApp message to the owner's connected number (their own WhatsApp). REQUIRES HUMAN APPROVAL via the Sentinel. Only use for messages the user explicitly asked to send or confirmed.",
-      parameters: {
-        type: "object",
-        properties: { text: str("Message text to send") },
-        required: ["text"],
-      },
+        "Message the owner's own connected WhatsApp number. REQUIRES HUMAN APPROVAL; only for sends the user explicitly requested or confirmed.",
+      parameters: { type: "object", properties: { text: s() }, required: ["text"] },
     },
     run: (ctx, a) =>
       import("../connectors/messaging").then((m) => m.sendWhatsApp(ctx.taskId, ctx.conversationId, a.text)),
@@ -193,14 +176,13 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "set_reminder",
-      description:
-        "Set a reminder for the user. Fires as a chat message (or via their connected Telegram/WhatsApp if they ask for it there). Examples: 'in 20 minutes', 'tomorrow 9am', 'tonight 8pm', or an ISO datetime.",
+      description: "Set a reminder; fires as a chat message (or Telegram/WhatsApp if channel='messaging').",
       parameters: {
         type: "object",
         properties: {
-          content: str("What to remind the user of"),
-          when: str("Natural-language time: 'in 20 minutes', 'tomorrow 9am', 'tonight', or ISO datetime"),
-          channel: str("Optional: 'chat' (default) or 'messaging' to also ping their phone"),
+          content: s(),
+          when: str("Natural time ('in 20 minutes', 'tomorrow 9am') or ISO datetime"),
+          channel: str("'chat' (default) or 'messaging' to ping their phone"),
         },
         required: ["content", "when"],
       },
@@ -233,7 +215,7 @@ export const TOOLS: AgentTool[] = [
     def: {
       name: "cancel_reminder",
       description: "Cancel upcoming reminder(s) by id or matching text.",
-      parameters: { type: "object", properties: { match: str("Reminder id or text to match") }, required: ["match"] },
+      parameters: { type: "object", properties: { match: s() }, required: ["match"] },
     },
     run: async (_ctx, a) => {
       const { cancelReminder } = await import("../reminders");
@@ -245,12 +227,12 @@ export const TOOLS: AgentTool[] = [
     def: {
       name: "create_monitor",
       description:
-        "Create a standing monitor: a watch the agent re-checks on a schedule and reports back when something CHANGES. Example: 'watch the price of X', 'check if my refund arrived'. Runs in the background forever until paused/cancelled.",
+        "Create a standing monitor: re-checks on a schedule, reports only on change, runs until paused or stopped. Embed the check in the prompt, e.g. 'watch the price of amazon.com/dp/B0XYZ and tell me when it drops under $30'.",
       parameters: {
         type: "object",
         properties: {
-          prompt: str("What to watch, as a watch instruction, e.g. 'watch the price of the Anker charger on amazon.com/dp/B0XYZ and tell me when it drops under $30'"),
-          cadence: str("Optional: 'hourly', 'every_6h' (default), or 'daily'", ),
+          prompt: s(),
+          cadence: str("'hourly', 'every_6h' (default), or 'daily'"),
         },
         required: ["prompt"],
       },
@@ -265,7 +247,7 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "list_monitors",
-      description: "List standing monitors and their latest status.",
+      description: "List standing monitors with status.",
       parameters: { type: "object", properties: {} },
     },
     run: async () => {
@@ -285,15 +267,8 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "pause_or_resume_monitor",
-      description: "Pause or resume a standing monitor by id. Paused monitors stop checking until resumed.",
-      parameters: {
-        type: "object",
-        properties: {
-          monitor_id: str("Monitor id from list_monitors"),
-          action: str("'pause' or 'resume'") ,
-        },
-        required: ["monitor_id", "action"],
-      },
+      description: "Pause or resume a monitor by id.",
+      parameters: { type: "object", properties: { monitor_id: s(), action: str("'pause' or 'resume'") }, required: ["monitor_id", "action"] },
     },
     run: async (_ctx, a) => {
       const { setMonitorStatus } = await import("../monitors");
@@ -304,8 +279,8 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "stop_monitor",
-      description: "Permanently stop and delete a standing monitor by id.",
-      parameters: { type: "object", properties: { monitor_id: str("Monitor id from list_monitors") }, required: ["monitor_id"] },
+      description: "Permanently stop and delete a monitor by id.",
+      parameters: { type: "object", properties: { monitor_id: s() }, required: ["monitor_id"] },
     },
     run: async (_ctx, a) => {
       const { deleteMonitor } = await import("../monitors");
@@ -316,8 +291,11 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "remember",
-      description: "Save a durable fact or preference about the user to long-term memory.",
-      parameters: { type: "object", properties: { content: str("Fact to remember"), category: str("One of: general, preferences, people, schedule, work, health, finance") } },
+      description: "Save a durable fact or preference to long-term memory.",
+      parameters: {
+        type: "object",
+        properties: { content: s(), category: str("One of: general, preferences, people, schedule, work, health, finance") },
+      },
     },
     run: async (_ctx, a) => {
       const m = await import("../memory");
@@ -328,8 +306,8 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "forget",
-      description: "Delete memories matching a phrase (user asked to forget something).",
-      parameters: { type: "object", properties: { match: str("Text to match for deletion") }, required: ["match"] },
+      description: "Delete memories matching a phrase.",
+      parameters: { type: "object", properties: { match: s() }, required: ["match"] },
     },
     run: async (_ctx, a) => {
       const m = await import("../memory");
@@ -340,9 +318,8 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "task_retry",
-      description:
-        "Re-run a previously failed task with its original goal. Use when the user replies to a digest asking to retry something. Returns a new taskId.",
-      parameters: { type: "object", properties: { task_id: str("Id of the failed task to retry") }, required: ["task_id"] },
+      description: "Re-run a failed task by id (digest replies). Returns a new taskId.",
+      parameters: { type: "object", properties: { task_id: s() }, required: ["task_id"] },
     },
     run: async (_ctx, a) => {
       const { retryTask, getTask } = await import("./runner");
@@ -359,13 +336,8 @@ export const TOOLS: AgentTool[] = [
   {
     def: {
       name: "task_complete",
-      description:
-        "Mark the current task complete with a final summary for the user. Call when done.",
-      parameters: {
-        type: "object",
-        properties: { summary: str("Final summary for the user") },
-        required: ["summary"],
-      },
+      description: "Mark the task complete with a final user-facing summary. Call when done.",
+      parameters: { type: "object", properties: { summary: s() }, required: ["summary"] },
     },
     run: async (_ctx, a) => `COMPLETE: ${a.summary}`,
   },

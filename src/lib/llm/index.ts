@@ -14,7 +14,10 @@ function buildAdapter(provider: string): LLMAdapter {
     if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing in .env");
     return geminiAdapter({
       apiKey: process.env.GEMINI_API_KEY,
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      // "gemini-flash-latest" is a Google-maintained alias that always points
+      // at the current flash model — pinned snapshots like "gemini-2.5-flash"
+      // get retired for new accounts (404 "no longer available to new users").
+      model: process.env.GEMINI_MODEL || "gemini-flash-latest",
     });
   }
   if (provider === "groq") {

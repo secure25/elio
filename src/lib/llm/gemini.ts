@@ -113,7 +113,7 @@ function toGeminiTools(tools: ToolDef[]) {
 }
 
 export function geminiAdapter(opts: { apiKey: string; model?: string }): LLMAdapter {
-  const model = opts.model || "gemini-2.5-flash";
+  const model = opts.model || "gemini-flash-latest";
   return {
     provider: "gemini",
     model,

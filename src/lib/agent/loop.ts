@@ -1,6 +1,6 @@
 // ── The agent loop: Elio's reasoning core ──
 // Drives LLM ↔ tool calls until task completion, persistence each step.
-import type { LLMMessage } from "../llm/types";
+import type { LLMMessage, ToolDef } from "../llm/types";
 import { getAdapter } from "../llm";
 import { getTool, toolDefs, type ToolContext } from "./tools";
 import { addStep, audit, db } from "../db";
@@ -46,6 +46,73 @@ Capabilities for real-world errands:
   create monitors for one-off questions — answer those directly.
 
 Be concise, warm, and concrete. Write like a capable assistant, not a robot.`;
+
+// ── Tier-1 tool gating: NONE/FULL only (no family subsets) ─────────────────
+// All 26 tool schemas (~1,350 tokens) are prefilled on EVERY agent call; on a
+// CPU-only VPS that dominated latency (3,199→110s with-tools vs 5.4s without).
+// Clearly conversational first turns therefore run with NO tool schemas.
+// Safety principle: when uncertain, fail open to FULL — a false positive only
+// costs schema prefill; a false negative would block a real request.
+// Reversible via TOOL_GATING=false. Gating applies only to step 0; every later
+// step and any conversation with prior tool activity always gets FULL.
+const TOOL_GATING = true;
+
+// Explicit tool-name mention → always FULL (user/prompt escape hatch).
+const TOOL_NAMES =
+  /\b(web_search|web_fetch|browser_goto|browser_read|browser_click|browser_fill|browser_submit|gmail_list|gmail_read|gmail_send|calendar_list|calendar_create|calendar_delete|send_telegram|send_whatsapp|set_reminder|list_reminders|cancel_reminder|create_monitor|list_monitors|pause_or_resume_monitor|stop_monitor|remember|forget|task_retry|task_complete)\b/i;
+
+// Pure small talk / meta-conversation — matches the WHOLE message only, so a
+// greeting with any task attached ("hi, search flights") does NOT match.
+const CONVERSATIONAL =
+  /^(hi+|hey+|hello+|yo|sup|gm|gn|thanks|thank you|thankyou|thx|ty|ok(ay)?|cool|nice|great|awesome|perfect|wow|good (morning|afternoon|evening|night)|goodnight|bye+|goodbye|later|see (ya|you)|how are you|how'?s it going|what'?s up|how have you been|what did we talk about earlier|what were we talking about|who are you|what are you|what can you do|what'?s your name)([\s!,.?]*(elio|muse))?[\s!.?,]*$/i;
+
+// Definition-shaped questions ("What is an API?") are conversational — but only
+// when they carry no task signal. "What is the weather?"/"What is my schedule?"
+// contain task nouns or personal references and fall through to FULL.
+const DEFINITIONISH =
+  /^(what('s| is| are| was)\b|who('s| is| was)\b|explain\b|define\b|describe\b|tell me (what|about|how)\b|how (does|do|did)\b[^?]*\bwork\b)/i;
+const TASK_SIGNALS =
+  /\b(search|google|look\s?up|find|research|weather|forecast|news|price|stock|remind|reminder|schedule|calendar|book|booking|reservation|appointment|event|meeting|gmail|e-?mail|email|inbox|telegram|whatsapp|message|browse|browser|open|visit|website|url|https?:\/\/|www\.|monitor|watch|track|check|summar|digest|retry|task|goal|buy|order|send|create|delete|cancel|my)\b/i;
+
+// Recovery (rare): a gated reply that clearly expects to act means the gate
+// missed. Deliberately conservative — matches "I can search the web for that",
+// "I don't have the ability to send emails", "Would you like me to check…" —
+// NOT ordinary greetings ("Hello! How can I assist you today?").
+const ACTION_SIGNAL =
+  /\b(i (can|could|will|'ll) (search|find|check|send|create|remind|book|fetch|open|browse|look)|i can'?t |i don'?t have (the ability|access|tools?)|no (tools?|tool access)|unable to|would you like me to|want me to|need me to|shall i)\b/i;
+
+/** Any task in this conversation ever used a tool → always FULL afterwards. */
+function priorToolActivity(conversationId: string): boolean {
+  try {
+    return Boolean(
+      db
+        .prepare(
+          `SELECT 1 FROM task_steps s JOIN tasks t ON s.task_id = t.id
+           WHERE t.conversation_id = ? AND s.kind LIKE 'tool.%' LIMIT 1`
+        )
+        .get(conversationId)
+    );
+  } catch {
+    return true; // fail open on any DB trouble
+  }
+}
+
+/** Tier-1 gate: "none" only for clearly pure conversation; otherwise "full". */
+export function gateDecision(userText: string, conversationId: string | null): "none" | "full" {
+  if (!TOOL_GATING) return "full";
+  const text = userText.trim();
+  if (TOOL_NAMES.test(text)) return "full"; // explicit tool name → escape hatch
+  if (conversationId && priorToolActivity(conversationId)) return "full";
+  if (CONVERSATIONAL.test(text)) return "none";
+  if (DEFINITIONISH.test(text) && !TASK_SIGNALS.test(text)) return "none";
+  return "full"; // anything ambiguous → fail open
+}
+
+/** Tool set for a loop step: gated NONE only on step 0 of a conversational turn. */
+export function toolsForStep(userText: string, conversationId: string | null, step: number): ToolDef[] {
+  if (!TOOL_GATING || step > 0) return toolDefs();
+  return gateDecision(userText, conversationId) === "none" ? [] : toolDefs();
+}
 
 export interface RunOptions {
   taskId: string | null;
@@ -106,7 +173,19 @@ export async function runAgent(
 
   let finalText = "";
   for (let step = 0; step < maxSteps; step++) {
-    const res = await adapter.complete(messages, { tools: toolDefs(), temperature: 0.4 });
+    const gatedTools = toolsForStep(userText, opts.conversationId, step);
+    let res = await adapter.complete(messages, { tools: gatedTools, temperature: 0.4 });
+
+    // Recovery: the gate said NONE but the reply clearly expects to act —
+    // re-call once with full tools. Costs one small call; never a net loss.
+    if (gatedTools.length === 0 && ACTION_SIGNAL.test(res.text)) {
+      emit(
+        opts.onEvent,
+        { type: "step", kind: "gate.recovery", detail: redact(res.text.slice(0, 200)), ts: Date.now() },
+        opts.taskId
+      );
+      res = await adapter.complete(messages, { tools: toolDefs(), temperature: 0.4 });
+    }
     if (res.text.trim()) {
       emit(opts.onEvent, { type: "step", kind: "say", detail: redact(res.text.slice(0, 400)), ts: Date.now() }, opts.taskId);
     }

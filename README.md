@@ -22,7 +22,7 @@ negotiates — with Muse's signature safety architecture rebuilt end-to-end:
 - **Next.js 15 + TypeScript + Tailwind** (App Router, Node runtime)
 - **SQLite via `node:sqlite`** — no native compilation needed
 - **LLM: free-tier cloud models via a pluggable adapter**
-  - default: **Google Gemini** free tier (`gemini-2.5-flash`, free API key from AI Studio)
+  - default: **Google Gemini** free tier (`gemini-flash-latest` alias, free API key from AI Studio)
   - one-line swap: **Groq** or **OpenRouter** free models (OpenAI-compatible adapter)
 - **Real integrations**: Gmail + Google Calendar (hand-rolled OAuth 2.0, REST), live web
   (fetch + DuckDuckGo search), real browser (Playwright)
