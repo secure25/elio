@@ -58,6 +58,10 @@ export default function SettingsPage() {
   const [tgBusy, setTgBusy] = useState(false);
 
   // Profile state
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [userName, setUserName] = useState("Elio User");
   const [userEmail, setUserEmail] = useState("");
@@ -981,6 +985,89 @@ export default function SettingsPage() {
                   <h3 className="font-editorial text-lg font-semibold text-[var(--text)]">
                     Credential Vault & Authentication
                   </h3>
+
+                  {/* Change password — sets a known credential from this device */}
+                  <div className="pb-4 mb-1 border-b border-[var(--border)] space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold text-[var(--text)]">Change Password</div>
+                      <div className="text-[11px] text-[var(--muted)] mt-0.5">
+                        Requires your current password. Use this to set a known password on new devices.
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Current password"
+                        className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+                      />
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="New password (min 6 characters)"
+                        className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+                      />
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        placeholder="Confirm new password"
+                        className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-sm)] text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (pwBusy) return;
+                        if (!currentPassword || !newPassword) {
+                          showToast("Fill in your current and new password first.");
+                          return;
+                        }
+                        if (newPassword !== confirmNewPassword) {
+                          showToast("New passwords do not match.");
+                          return;
+                        }
+                        setPwBusy(true);
+                        try {
+                          const res = await fetch("/api/auth/change-password", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ currentPassword, newPassword }),
+                          });
+                          const data = await res.json();
+                          if (res.ok) {
+                            showToast("Password updated — use it on your other devices.");
+                            setCurrentPassword("");
+                            setNewPassword("");
+                            setConfirmNewPassword("");
+                          } else {
+                            showToast(data.error || "Could not change password.");
+                          }
+                        } catch {
+                          showToast("Network error — please try again.");
+                        } finally {
+                          setPwBusy(false);
+                        }
+                      }}
+                      disabled={pwBusy}
+                      className="btn text-xs py-1.5 px-3 disabled:opacity-50"
+                    >
+                      {pwBusy ? "Saving…" : "Update Password"}
+                    </button>
+                  </div>
 
                   <div className="flex items-center justify-between pb-4 border-b border-[var(--border)]">
                     <div>

@@ -83,6 +83,9 @@ export default function LoginPage() {
                 <input
                   type="email"
                   required
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
@@ -96,12 +99,19 @@ export default function LoginPage() {
                 <label className="block text-xs uppercase tracking-wider font-semibold text-[var(--text-muted)]">
                   Password
                 </label>
+                <Link href="/forgot-password" className="text-xs text-[var(--accent)] hover:underline">
+                  Forgot password?
+                </Link>
               </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="password"
                   required
+                  autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
