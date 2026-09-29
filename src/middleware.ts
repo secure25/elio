@@ -14,7 +14,7 @@ const PUBLIC_PATHS = [
   "/manifest.webmanifest",
   "/elio-icon.png",
   "/elio-logo.png",
-  "/elio-app-icon.png",
+  "/elio-icon.png",
 ];
 
 export function middleware(request: NextRequest) {

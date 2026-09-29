@@ -399,7 +399,7 @@ export default function TasksPage() {
             className="flex items-center gap-2 pl-2 border-l border-[var(--border)] cursor-pointer"
           >
             <Image
-              src="/elio-app-icon.png"
+              src="/elio-icon.png"
               alt="Elio"
               width={28}
               height={28}

@@ -127,7 +127,7 @@ export function LiveBrowser({
             {/* Context mock card matching wireframe */}
             <div className="flex items-start gap-3 p-3.5 rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <Image
-                src="/elio-app-icon.png"
+                src="/elio-icon.png"
                 alt="Elio"
                 width={32}
                 height={32}

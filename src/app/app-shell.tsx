@@ -47,7 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </button>
         <Link href="/" className="flex items-center gap-2 min-w-0">
           <Image
-            src="/elio-app-icon.png"
+            src="/elio-icon.png"
             alt=""
             width={28}
             height={28}

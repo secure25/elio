@@ -95,7 +95,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       <Link href="/" className="block px-2 pt-2 pb-6 group">
         <div className="flex items-center gap-2.5">
           <Image
-            src="/elio-app-icon.png"
+            src="/elio-icon.png"
             alt="Elio"
             width={32}
             height={32}

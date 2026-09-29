@@ -46,7 +46,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <Link href="/landing" className="inline-flex items-center gap-3 mb-4 group">
             <Image
-              src="/elio-app-icon.png"
+              src="/elio-icon.png"
               alt="Elio"
               width={40}
               height={40}

@@ -384,7 +384,7 @@ export default function ChatPage() {
           {messages.length === 0 && !busy ? (
             <div className="h-full flex flex-col items-center justify-center max-w-xl mx-auto text-center py-8">
               <Image
-                src="/elio-app-icon.png"
+                src="/elio-icon.png"
                 alt="Elio"
                 width={64}
                 height={64}
@@ -457,7 +457,7 @@ export default function ChatPage() {
                 >
                   {m.role === "assistant" && (
                     <Image
-                      src="/elio-app-icon.png"
+                      src="/elio-icon.png"
                       alt="Elio"
                       width={32}
                       height={32}

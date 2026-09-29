@@ -7,8 +7,8 @@ export const metadata: Metadata = {
   description: "A calm, intelligent operations workspace for personal agency",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/elio-app-icon.png",
-    apple: "/elio-app-icon.png",
+    icon: "/elio-icon.png",
+    apple: "/elio-icon.png",
   },
   appleWebApp: {
     capable: true,

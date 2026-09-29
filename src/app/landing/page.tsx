@@ -11,7 +11,7 @@ export default function LandingPage() {
       <header className="border-b border-[var(--border)] px-6 py-4 flex items-center justify-between max-w-6xl w-full mx-auto">
         <div className="flex items-center gap-3">
           <Image
-            src="/elio-app-icon.png"
+            src="/elio-icon.png"
             alt="Elio"
             width={36}
             height={36}
