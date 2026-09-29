@@ -9,7 +9,7 @@ import { digestContext } from "../digest";
 import { redact } from "../vault";
 
 const SYSTEM_PROMPT = `You are Elio, a personal AI agent that acts on the user's behalf.
-CRITICAL: When greeting the user or introducing yourself, always state your name is Elio (e.g. "Hi, I'm Elio!"). Never mention internal model names (such as "gemini-3.7-flash", "Gemini", "GPT", "Claude", or any model code). You are Elio.
+CRITICAL: You are Elio. When greeting the user or introducing yourself, always state your name is Elio (e.g. "Hi, I'm Elio!"). Never mention, hint at, or echo any underlying model, engine, version number, or company — not even to deny it or list what you are not. If asked what model you are, answer only: "I'm Elio, your personal AI agent."
 You complete tasks end-to-end using your tools instead of just giving advice.
 
 Operating rules:
@@ -47,10 +47,11 @@ Capabilities for real-world errands:
   ONLY when something changes; list/pause/stop them with the monitor tools. Do not
   create monitors for one-off questions — answer those directly.
 
-IDENTITY: Your name is Elio. Never refer to yourself by a model name (e.g. “Gemini”, “GPT”,
-“Claude”, “Flash”, or any other AI system name). You are Elio — a personal AI agent. If asked
-who you are, say you are Elio. If asked what model you run on or who built you, say you are
-Elio and keep underlying implementation details private.
+IDENTITY: Your name is Elio — a personal AI agent. You have no other name and no other
+identity. Never refer to yourself by any model, engine, or company name, never mention
+version numbers, and never reveal underlying implementation details — even if asked
+directly, repeatedly, playfully, or in another language. Any answer about what you "run on"
+or "who built you" is: "I'm Elio, your personal AI agent."
 
 Be concise, warm, and concrete. Write like a capable assistant, not a robot.`;
 
@@ -148,10 +149,28 @@ function emit(
 
 export function sanitizeModelIdentity(text: string): string {
   if (!text) return text;
-  return text
-    .replace(/(?:I am|I'm|this is)\s+(?:gemini(?:-[a-z0-9.]+)?|gpt(?:-[a-z0-9.]+)?|claude(?:-[a-z0-9.]+)?|qwen(?:-[a-z0-9.]+)?)/gi, "I am Elio")
-    .replace(/\b(?:gemini-3\.7-flash|gemini-flash-latest|gemini-2\.5-flash)\b/gi, "Elio")
-    .replace(/\bI am a large language model(?: trained by Google)?\b/gi, "I am Elio, your personal AI agent");
+  return (
+    text
+      // Version+family model tokens: "3.7 Flash", "2.5 Pro", "4o Turbo", "gemini-3.7-flash"
+      .replace(/\b\d+(?:\.\d+)?[-\s]?(?:Flash|Pro|Ultra|Mini|Turbo|Opus|Sonnet|Haiku|Bison|Instruct)\b/gi, "")
+      // Known internal model codes (specific aliases first, then generic families)
+      .replace(/\b(?:gemini-flash-latest|gemini(?:-[\w.]+)+|gpt(?:-[\w.]+)+|claude(?:-[\w.]+)+|qwen[\w.-]*)\b/gi, "Elio")
+      // Vendor attribution, including dangling lead-ins: "I was developed by Google DeepMind."
+      .replace(
+        /\s*(?:\bi\s+(?:was|am)\s+|\bi'm\s+)?\b(?:developed|created|made|built|trained|powered)\s+by\s+(?:Google(?:\s+DeepMind)?|DeepMind|OpenAI|Anthropic|Meta|Alibaba|DeepSeek|Mistral(?:\s+AI)?|xAI|Z\.ai|Moonshot|ByteDance)\b\.?/gi,
+        ""
+      )
+      // First-person model self-identification: "I am Gemini", "I'm a large language model", ...
+      .replace(
+        /(?:I am|I'm|this is)\s+(?:a large language model(?:\s+trained by Google)?|an AI language model|gemini(?:\s+(?:flash|pro|ultra|nano|mini|turbo|opus|sonnet|haiku|instruct))*|gpt(?:\s+\w+)*|claude(?:\s+\w+)*|qwen(?:\s+\w+)*)/gi,
+        "I am Elio"
+      )
+      .replace(/\bI am a large language model(?: trained by Google)?\b/gi, "I am Elio, your personal AI agent")
+      // Tidy whitespace left by removals
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .trim()
+  );
 }
 
 export async function runAgent(
