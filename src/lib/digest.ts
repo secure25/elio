@@ -15,16 +15,39 @@ export interface Digest {
   meta: string | null;
 }
 
-export function digestConfig(): { hour: number; enabled: boolean; emailEnabled: boolean } {
-  const hour = Number(getSetting("digest_hour") ?? "8");
+export function digestConfig(): {
+  hour: number;
+  eveningHour: number;
+  enabled: boolean;
+  emailEnabled: boolean;
+  telegramEnabled: boolean;
+} {
+  const hour = Number(getSetting("digest_hour") ?? "9");
+  const eveningHour = Number(getSetting("digest_evening_hour") ?? "21");
   const enabled = (getSetting("digest_enabled") ?? "true") === "true";
   const emailEnabled = (getSetting("digest_email_enabled") ?? "false") === "true";
-  return { hour: Number.isFinite(hour) ? hour : 8, enabled, emailEnabled };
+  const telegramEnabled = (getSetting("digest_telegram_enabled") ?? "true") === "true";
+  return {
+    hour: Number.isFinite(hour) ? hour : 9,
+    eveningHour: Number.isFinite(eveningHour) ? eveningHour : 21,
+    enabled,
+    emailEnabled,
+    telegramEnabled,
+  };
 }
 
-export function setDigestConfig(opts: { hour?: number; enabled?: boolean; emailEnabled?: boolean }) {
+export function setDigestConfig(opts: {
+  hour?: number;
+  eveningHour?: number;
+  enabled?: boolean;
+  emailEnabled?: boolean;
+  telegramEnabled?: boolean;
+}) {
   if (typeof opts.hour === "number" && opts.hour >= 0 && opts.hour <= 23) {
     setSetting("digest_hour", String(Math.floor(opts.hour)));
+  }
+  if (typeof opts.eveningHour === "number" && opts.eveningHour >= 0 && opts.eveningHour <= 23) {
+    setSetting("digest_evening_hour", String(Math.floor(opts.eveningHour)));
   }
   if (typeof opts.enabled === "boolean") {
     setSetting("digest_enabled", opts.enabled ? "true" : "false");
@@ -36,20 +59,27 @@ export function setDigestConfig(opts: { hour?: number; enabled?: boolean; emailE
       risk: "medium",
     });
   }
+  if (typeof opts.telegramEnabled === "boolean") {
+    setSetting("digest_telegram_enabled", opts.telegramEnabled ? "true" : "false");
+    audit("digest", "telegram.optin", {
+      detail: opts.telegramEnabled ? "opted in" : "opted out",
+      risk: "medium",
+    });
+  }
 }
 
 /** Has today's scheduled digest already been produced? */
-export function isDue(): boolean {
-  const { enabled } = digestConfig();
+export function isDue(kind: "morning" | "evening" = "morning"): boolean {
+  const { enabled, hour, eveningHour } = digestConfig();
   if (!enabled) return false;
-  const { hour } = digestConfig();
+  const targetHour = kind === "morning" ? hour : eveningHour;
   const d = new Date();
-  d.setHours(hour, 0, 0, 0);
+  d.setHours(targetHour, 0, 0, 0);
   const dueAt = d.getTime();
   if (Date.now() < dueAt) return false;
   const last = db
-    .prepare("SELECT MAX(ts) AS maxTs FROM digests WHERE kind = 'morning'")
-    .get() as { maxTs: number | null };
+    .prepare("SELECT MAX(ts) AS maxTs FROM digests WHERE kind = ?")
+    .get(kind) as { maxTs: number | null };
   return !last.maxTs || last.maxTs < dueAt;
 }
 
@@ -177,8 +207,9 @@ async function gather(): Promise<Gathered> {
   };
 }
 
-function fallbackBody(g: Gathered): string {
-  const lines: string[] = [`## Good morning — your Elio digest`, ``];
+function fallbackBody(g: Gathered, kind: "morning" | "evening" = "morning"): string {
+  const greeting = kind === "morning" ? "Good morning" : "Good evening";
+  const lines: string[] = [`## ${greeting} — your Elio digest`, ``];
   lines.push(`### Background goals`);
   if (g.doneYesterday.length) {
     lines.push(`**Completed recently:**`);
@@ -244,7 +275,7 @@ function fallbackBody(g: Gathered): string {
   return lines.join("\n");
 }
 
-async function composeWithLlm(g: Gathered): Promise<string | null> {
+async function composeWithLlm(g: Gathered, kind: "morning" | "evening" = "morning"): Promise<string | null> {
   if (!g.llmConfigured) return null;
   try {
     const { getAdapter } = await import("./llm");
@@ -261,12 +292,13 @@ async function composeWithLlm(g: Gathered): Promise<string | null> {
       `Upcoming reminders: ${JSON.stringify(g.upcomingReminders)}`,
       `Standing monitors: ${JSON.stringify(g.activeMonitors)}`,
     ].join("\n");
+    const greeting = kind === "morning" ? "morning" : "evening";
     const res = await adapter.complete(
       [
         {
           role: "system",
           content:
-            `You are Elio, writing the user's morning digest. Summarize background goal progress ` +
+            `You are Elio, writing the user's ${greeting} digest. Summarize background goal progress ` +
             `and suggest 2-4 concrete next actions. Be warm, concise, and specific; reference ` +
             `actual task names. Use markdown with short sections. Never invent facts not in the data.`,
         },
@@ -281,18 +313,19 @@ async function composeWithLlm(g: Gathered): Promise<string | null> {
   }
 }
 
-/** Produce today's morning digest (idempotent per day). Returns the digest row. */
-export async function runMorningDigest(force = false): Promise<Digest> {
-  if (!force && !isDue()) {
+/** Produce today's digest of the given kind (idempotent per day). Returns the digest row. */
+export async function runDigest(kind: "morning" | "evening" = "morning", force = false): Promise<Digest> {
+  if (!force && !isDue(kind)) {
     const last = db
-      .prepare("SELECT * FROM digests WHERE kind = 'morning' ORDER BY ts DESC LIMIT 1")
-      .get() as unknown as Digest | undefined;
+      .prepare("SELECT * FROM digests WHERE kind = ? ORDER BY ts DESC LIMIT 1")
+      .get(kind) as unknown as Digest | undefined;
     if (last) return last;
   }
   const g = await gather();
-  const body = (await composeWithLlm(g)) ?? fallbackBody(g);
-  const emailEnabled = digestConfig().emailEnabled;
+  const body = (await composeWithLlm(g, kind)) ?? fallbackBody(g, kind);
+  const { emailEnabled, telegramEnabled } = digestConfig();
   let emailStatus: string | null = null;
+  let telegramStatus: string | null = null;
 
   // Unattended email delivery — only when the user explicitly opted in.
   // Deliberately skipped for forced/manual preview runs (force = true).
@@ -300,21 +333,32 @@ export async function runMorningDigest(force = false): Promise<Digest> {
     emailStatus = await emailDigest(body);
   }
 
+  // Telegram delivery — on by default (user can toggle off).
+  if (telegramEnabled && !force) {
+    telegramStatus = await telegramDigest(body, kind);
+  }
+
   const id = uuid();
   db.prepare("INSERT INTO digests (id, ts, kind, body, read, meta) VALUES (?,?,?,?,0,?)").run(
     id,
     now(),
-    "morning",
+    kind,
     body,
     JSON.stringify({
       source: g.llmConfigured ? "llm" : "fallback",
       ...(emailStatus ? { email: emailStatus } : {}),
+      ...(telegramStatus ? { telegram: telegramStatus } : {}),
     })
   );
-  audit("digest", "morning.generated", {
-    detail: `${body.length} chars (source=${g.llmConfigured ? "llm" : "fallback"}${emailStatus ? ", email=" + emailStatus : ""})`,
+  audit("digest", `${kind}.generated`, {
+    detail: `${body.length} chars (source=${g.llmConfigured ? "llm" : "fallback"}${emailStatus ? ", email=" + emailStatus : ""}${telegramStatus ? ", telegram=" + telegramStatus : ""})`,
   });
   return db.prepare("SELECT * FROM digests WHERE id = ?").get(id) as unknown as Digest;
+}
+
+/** Backward-compatible alias — calls runDigest("morning", force). */
+export async function runMorningDigest(force = false): Promise<Digest> {
+  return runDigest("morning", force);
 }
 
 /**
@@ -332,6 +376,30 @@ export async function emailDigest(body: string): Promise<string> {
     return await gmailSendDigest(subject, body);
   } catch (e: any) {
     audit("digest", "email.failed", { detail: String(e.message).slice(0, 200), risk: "low" });
+    return `failed: ${String(e.message).slice(0, 120)}`;
+  }
+}
+
+/**
+ * Push the digest to Telegram via the bot.
+ * Returns a status string: "sent" | "not_connected" | "failed: ...".
+ */
+export async function telegramDigest(body: string, kind: "morning" | "evening" = "morning"): Promise<string> {
+  try {
+    const { deliverTelegram, telegramConfigured } = await import("./connectors/messaging");
+    if (!telegramConfigured()) return "not_connected";
+    const { guard } = await import("./sentinel");
+    const verdict = guard({
+      action: "message.send_digest",
+      detail: `Deliver ${kind} digest to the owner's Telegram`,
+    });
+    if (verdict.decision === "deny") return `blocked: ${verdict.reason}`;
+    const greeting = kind === "morning" ? "☀️ Good morning" : "🌙 Good evening";
+    const header = `${greeting} — here's your Elio digest:\n\n`;
+    const result = await deliverTelegram(header + body);
+    return result.startsWith("Sent") ? "sent" : result;
+  } catch (e: any) {
+    audit("digest", "telegram.failed", { detail: String(e.message).slice(0, 200), risk: "low" });
     return `failed: ${String(e.message).slice(0, 120)}`;
   }
 }

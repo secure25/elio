@@ -263,13 +263,26 @@ export default function ConnectorsPage() {
   async function connectTelegram() {
     setMessagingBusy(true);
     const result = await messagingAction({ action: "resolve_telegram_chat" });
-    setMessagingBusy(false);
     if (result?.ok) {
+      await messagingAction({ action: "set_telegram_webhook" });
+      setMessagingBusy(false);
       setConnectingService(null);
-      showToast(result.message);
+      showToast(result.message + " · 2-way Telegram chat enabled!");
       load();
     } else {
+      setMessagingBusy(false);
       showToast(result?.message || "Could not find your Telegram chat");
+    }
+  }
+
+  async function setupTelegramWebhook() {
+    setMessagingBusy(true);
+    const result = await messagingAction({ action: "set_telegram_webhook" });
+    setMessagingBusy(false);
+    if (result?.ok) {
+      showToast("Telegram webhook synced: " + (result as any).url);
+    } else {
+      showToast((result as any)?.message || "Failed to set webhook");
     }
   }
 
@@ -420,12 +433,24 @@ export default function ConnectorsPage() {
               </button>
               <div className="flex gap-2">
                 {managingService.kind === "messaging" && (
-                  <button
-                    onClick={() => testMessaging(managingService.id as "telegram" | "whatsapp")}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[var(--border)] text-xs text-[var(--text)] hover:bg-[#EBE8DF]"
-                  >
-                    Send test message
-                  </button>
+                  <>
+                    <button
+                      onClick={() => testMessaging(managingService.id as "telegram" | "whatsapp")}
+                      disabled={messagingBusy}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[var(--border)] text-xs text-[var(--text)] hover:bg-[#EBE8DF]"
+                    >
+                      Send test message
+                    </button>
+                    {managingService.id === "telegram" && (
+                      <button
+                        onClick={setupTelegramWebhook}
+                        disabled={messagingBusy}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[var(--border)] text-xs text-[var(--text)] hover:bg-[#EBE8DF]"
+                      >
+                        Enable 2-Way Chat
+                      </button>
+                    )}
+                  </>
                 )}
                 <button
                   onClick={() => handleSyncNow(managingService.id)}
@@ -481,7 +506,7 @@ export default function ConnectorsPage() {
                   {connectingService.id === "telegram" ? (
                     <div className="p-4 rounded-xl bg-[var(--bg)] border border-[var(--border)] space-y-3">
                       <p className="text-xs text-[var(--text)] leading-relaxed">
-                        1. Create a free bot with <span className="font-semibold">@BotFather</span> on Telegram. 2. Open your bot and send it any message (press START). 3. Put the bot token in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code>, then connect below — Elio finds your chat automatically.
+                        1. Create a free bot with <span className="font-semibold">@BotFather</span> on Telegram. 2. Open your bot and send it any message (press START). 3. Put the bot token in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code>, then connect below — Elio finds your chat and enables 2-way chat automatically!
                       </p>
                       <button
                         onClick={() => connectTelegram()}
@@ -512,7 +537,7 @@ export default function ConnectorsPage() {
                   )}
                   <div className="text-[11px] text-[var(--muted)] flex items-center gap-1.5">
                     <Lock size={12} />
-                    <span>Send-only: replies arrive in your normal app. Recipient stored AES-256 encrypted in your vault.</span>
+                    <span>2-way chat enabled: message Elio on Telegram anytime. Recipient stored AES-256 encrypted in your vault.</span>
                   </div>
                 </div>
               ) : connectingService.id === "gcal" || connectingService.id === "gmail" ? (

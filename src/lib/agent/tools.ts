@@ -52,6 +52,23 @@ export const TOOLS: AgentTool[] = [
   },
   {
     def: {
+      name: "browser_scroll",
+      description: "Scroll the browser page down, up, top, or bottom to see more content.",
+      parameters: {
+        type: "object",
+        properties: {
+          direction: str("'down' (default), 'up', 'top', or 'bottom'"),
+          amount: { type: "number", description: "Pixels to scroll, default 600" },
+        },
+      },
+    },
+    run: (ctx, a) =>
+      import("../connectors/browser").then((m) =>
+        m.browserScroll(ctx.taskId, a.direction, a.amount)
+      ),
+  },
+  {
+    def: {
       name: "browser_click",
       description: "Click an element by ref (e.g. e7) from the latest page state.",
       parameters: { type: "object", properties: { ref: s() }, required: ["ref"] },

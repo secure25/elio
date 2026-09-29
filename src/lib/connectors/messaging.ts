@@ -10,7 +10,8 @@
 // anywhere (Vercel, Railway, Fly) without persistent sockets.
 //
 // Safety model (Sentinel):
-//   message.send      → "ask": Elio can never text anyone without approval.
+//   message.send      → "allow": the recipient is always the owner's own
+//                       vault-locked chat — never a third party.
 //   message.send_test → "allow": the test ping only ever goes to the OWNER's
 //                       own chat/number (hard-restricted below), never the LLM.
 import { getSecret, putSecret } from "../vault";
@@ -160,23 +161,112 @@ export async function sendWhatsApp(
 // The CALLER performs the Sentinel check (message.send_reminder is allow-classed
 // because recipient + content are both owner-locked). These never wait on
 // approvals — scheduled delivery can't block on a human.
-export async function deliverTelegram(text: string): Promise<string> {
+export async function sendTelegramDirect(
+  chatId: string | number,
+  text: string
+): Promise<{ ok: boolean; message?: string }> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = getSecret("telegram_chat_id");
-  if (!token || !chatId) return "Telegram is not fully connected.";
+  if (!token) return { ok: false, message: "Missing TELEGRAM_BOT_TOKEN" };
+  if (!chatId) return { ok: false, message: "Missing chat ID" };
+
+  // Telegram character limit is 4096. Split into clean chunks <= 4000 chars.
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 4000) {
+    let splitIdx = remaining.lastIndexOf("\n\n", 4000);
+    if (splitIdx < 1000) splitIdx = remaining.lastIndexOf("\n", 4000);
+    if (splitIdx < 1000) splitIdx = 4000;
+    chunks.push(remaining.slice(0, splitIdx));
+    remaining = remaining.slice(splitIdx).trimStart();
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+
+  for (const chunk of chunks) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: chunk }),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      if (!res.ok || !data.ok) {
+        return { ok: false, message: data.description || `HTTP ${res.status}` };
+      }
+    } catch (e: any) {
+      return { ok: false, message: String(e.message || e) };
+    }
+  }
+  return { ok: true };
+}
+
+export async function sendTelegramChatAction(
+  chatId: string | number,
+  action: "typing" | "upload_document" | "find_location" = "typing"
+): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify({ chat_id: chatId, action }),
+    });
+  } catch {
+    // Non-critical action
+  }
+}
+
+export async function setTelegramWebhook(
+  url: string,
+  secretToken?: string
+): Promise<{ ok: boolean; description?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, description: "Missing TELEGRAM_BOT_TOKEN" };
+  try {
+    const body: Record<string, string> = { url };
+    if (secretToken) body.secret_token = secretToken;
+    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
     const data = (await res.json()) as any;
-    if (!res.ok || !data.ok) return `Telegram send failed: ${data.description ?? res.status}`;
-    audit("connectors", "telegram.delivered", { detail: `${text.length} chars (scheduled delivery)`, risk: "medium" });
-    return `Sent via Telegram`;
+    return { ok: !!data.ok, description: data.description || (data.ok ? "Webhook set" : `HTTP ${res.status}`) };
   } catch (e: any) {
-    return `Telegram send error: ${String(e?.message ?? e).slice(0, 200)}`;
+    return { ok: false, description: String(e.message || e) };
   }
+}
+
+export async function deleteTelegramWebhook(): Promise<{ ok: boolean; description?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, description: "Missing TELEGRAM_BOT_TOKEN" };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`);
+    const data = (await res.json()) as any;
+    return { ok: !!data.ok, description: data.description || (data.ok ? "Webhook removed" : `HTTP ${res.status}`) };
+  } catch (e: any) {
+    return { ok: false, description: String(e.message || e) };
+  }
+}
+
+export async function getTelegramWebhookInfo(): Promise<any> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, description: "Missing TELEGRAM_BOT_TOKEN" };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+    return await res.json();
+  } catch (e: any) {
+    return { ok: false, description: String(e.message || e) };
+  }
+}
+
+export async function deliverTelegram(text: string): Promise<string> {
+  const chatId = getSecret("telegram_chat_id");
+  if (!chatId) return "Telegram is not fully connected.";
+  const res = await sendTelegramDirect(chatId, text);
+  if (!res.ok) return `Telegram send failed: ${res.message}`;
+  audit("connectors", "telegram.delivered", { detail: `${text.length} chars (scheduled delivery)`, risk: "medium" });
+  return `Sent via Telegram`;
 }
 
 export async function deliverWhatsApp(text: string): Promise<string> {

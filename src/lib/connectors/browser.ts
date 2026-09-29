@@ -42,7 +42,6 @@ async function captureFrame(p: Page): Promise<void> {
   try {
     const buf = await p.screenshot({
       type: "png",
-      clip: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height },
     });
     const frame: Frame = { data: buf.toString("base64"), capturedAt: Date.now() };
     latestFrame = frame;
@@ -268,8 +267,64 @@ export async function browserRead(taskId: string | null): Promise<string> {
   return pageState();
 }
 
+async function clickTarget(p: Page, info: ElementInfo): Promise<void> {
+  // Strategy 1: Try getByRole if accessible role + name exist
+  if (info.ariaRole && info.name) {
+    try {
+      const loc = p.getByRole(info.ariaRole as any, { name: info.name }).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+      await loc.click({ timeout: 3500 });
+      return;
+    } catch {
+      // Fall through to next strategy
+    }
+  }
+
+  // Strategy 2: If placeholder exists
+  if (info.placeholder) {
+    try {
+      const loc = p.getByPlaceholder(info.placeholder).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+      await loc.click({ timeout: 3500 });
+      return;
+    } catch {
+      // Fall through to next strategy
+    }
+  }
+
+  // Strategy 3: Try locator by DOM index
+  const nthLoc = p.locator(INTERACTIVE_SELECTOR).nth(info.index);
+  try {
+    await nthLoc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+    await nthLoc.click({ timeout: 3500 });
+    return;
+  } catch {
+    // Fall through to forced click
+  }
+
+  // Strategy 4: Forced click (bypasses sticky headers/navbars, cookie popups)
+  try {
+    await nthLoc.click({ force: true, timeout: 3500 });
+    return;
+  } catch {
+    // Fall through to in-page evaluate click
+  }
+
+  // Strategy 5: Direct evaluate click in browser page
+  await p.evaluate(
+    ({ sel, idx }: { sel: string; idx: number }) => {
+      const els = document.querySelectorAll(sel);
+      const el = els[idx] as HTMLElement;
+      if (!el) throw new Error("Element not found at index " + idx);
+      el.scrollIntoView({ block: "center", inline: "center" });
+      el.click();
+    },
+    { sel: INTERACTIVE_SELECTOR, idx: info.index }
+  );
+}
+
 export async function browserClick(taskId: string | null, ref: string): Promise<string> {
-  const p = await ensurePage();
+  let p = await ensurePage();
   const target = targetFor(ref);
   if (!target) return `Unknown ref "${ref}". Call browser.read to get current refs.`;
   const verdict = guard({
@@ -278,11 +333,126 @@ export async function browserClick(taskId: string | null, ref: string): Promise<
     taskId,
   });
   if (verdict.decision === "deny") return `Blocked by Sentinel: ${verdict.reason}`;
-  await (await target.locate(p)).click({ timeout: 15_000 });
-  await p.waitForTimeout(1200);
-  if (taskId) addStep(taskId, "browser.click", `${ref} "${target.info.name}"`);
+
+  try {
+    await clickTarget(p, target.info);
+  } catch (err: any) {
+    return `Click failed on ${ref}: ${err.message || String(err)}`;
+  }
+
+  // If click opened a new tab or window, adopt it
+  if (context) {
+    const pages = context.pages().filter((pg) => !pg.isClosed());
+    if (pages.length > 0 && pages[pages.length - 1] !== page) {
+      page = pages[pages.length - 1];
+      p = page;
+    }
+  }
+
+  await p.waitForLoadState("domcontentloaded", { timeout: 6000 }).catch(() => {});
+  await p.waitForTimeout(1000);
+  if (taskId) addStep(taskId, "browser.click", `${ref} "${target.info.name || target.info.role}"`);
   await captureFrame(p);
   return pageState();
+}
+
+export async function browserScroll(
+  taskId: string | null,
+  direction?: string,
+  amount?: number
+): Promise<string> {
+  const p = await ensurePage();
+  const dir = (direction || "down").toLowerCase();
+  const px = typeof amount === "number" && amount > 0 ? amount : 600;
+
+  const scrollResult = await p.evaluate(
+    ({ d, delta }: { d: string; delta: number }) => {
+      if (d === "top") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } else if (d === "bottom") {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      } else if (d === "up") {
+        window.scrollBy({ top: -delta, behavior: "smooth" });
+      } else {
+        // default "down"
+        window.scrollBy({ top: delta, behavior: "smooth" });
+      }
+      return {
+        scrollY: Math.round(window.scrollY),
+        scrollHeight: document.body.scrollHeight,
+        innerHeight: window.innerHeight,
+      };
+    },
+    { d: dir, delta: px }
+  );
+
+  // Wait for smooth scrolling to visually settle
+  await p.waitForTimeout(800);
+  if (taskId) addStep(taskId, "browser.scroll", `Scrolled ${dir} (${px}px)`);
+  await captureFrame(p);
+  return `Scrolled ${dir}. Viewport vertical position: ${scrollResult.scrollY}px (total page height: ${scrollResult.scrollHeight}px). Call browser.read to see refreshed visible elements.`;
+}
+
+async function fillTarget(p: Page, info: ElementInfo, value: string): Promise<void> {
+  // Strategy 1: Try getByRole if accessible role + name exist
+  if (info.ariaRole && info.name) {
+    try {
+      const loc = p.getByRole(info.ariaRole as any, { name: info.name }).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+      await loc.fill(value, { timeout: 3500 });
+      return;
+    } catch {
+      // Fall through to next strategy
+    }
+  }
+
+  // Strategy 2: If placeholder exists
+  if (info.placeholder) {
+    try {
+      const loc = p.getByPlaceholder(info.placeholder).first();
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+      await loc.fill(value, { timeout: 3500 });
+      return;
+    } catch {
+      // Fall through to next strategy
+    }
+  }
+
+  // Strategy 3: Try locator by DOM index
+  const nthLoc = p.locator(INTERACTIVE_SELECTOR).nth(info.index);
+  try {
+    await nthLoc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+    await nthLoc.fill(value, { timeout: 3500 });
+    return;
+  } catch {
+    // Fall through to focus + keyboard typing
+  }
+
+  // Strategy 4: Focus and type with keyboard
+  try {
+    await nthLoc.focus({ timeout: 2000 });
+    await p.keyboard.press("Control+A");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.type(value);
+    return;
+  } catch {
+    // Fall through to direct JS evaluation
+  }
+
+  // Strategy 5: Direct evaluate fill in browser page
+  await p.evaluate(
+    ({ sel, idx, val }: { sel: string; idx: number; val: string }) => {
+      const els = document.querySelectorAll(sel);
+      const el = els[idx] as HTMLInputElement | HTMLTextAreaElement;
+      if (!el) throw new Error("Element not found at index " + idx);
+      el.scrollIntoView({ block: "center", inline: "center" });
+      el.focus();
+      el.value = val;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { sel: INTERACTIVE_SELECTOR, idx: info.index, val: value }
+  );
 }
 
 export async function browserFill(
@@ -299,16 +469,16 @@ export async function browserFill(
     taskId,
   });
   if (verdict.decision === "deny") return `Blocked by Sentinel: ${verdict.reason}`;
-  const loc = await target.locate(p);
-  const tag = target.info.role.startsWith("input[") || target.info.role === "input";
-  if (tag || target.info.ariaRole === "textbox") {
-    await loc.fill(value, { timeout: 15_000 });
-  } else {
-    await loc.click({ timeout: 15_000 });
+
+  try {
+    await fillTarget(p, target.info, value);
+  } catch (err: any) {
+    return `Fill failed on ${ref}: ${err.message || String(err)}`;
   }
-  if (taskId) addStep(taskId, "browser.fill", `${ref} ← (value redacted)`);
+
+  if (taskId) addStep(taskId, "browser.fill", `${ref} ← "${value.slice(0, 30)}"`);
   await captureFrame(p);
-  return `Filled ${ref}.`;
+  return `Filled ${ref} with "${value}".`;
 }
 
 export async function browserSubmit(

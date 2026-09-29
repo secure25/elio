@@ -20,6 +20,7 @@ import {
   Download,
   CheckCircle2,
   FileText,
+  Plus,
 } from "lucide-react";
 
 interface Approval {
@@ -61,15 +62,18 @@ export default function ChatPage() {
   const [voiceOn, setVoiceOn] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [attachment, setAttachment] = useState<string | null>(null);
-  const [showBrowser, setShowBrowser] = useState(
-    // On phones the workspace panel starts hidden (it opens as a full sheet
-    // from the header menu); desktops keep it docked on the right.
-    () => typeof window !== "undefined" && window.innerWidth >= 1024
-  );
+  // Start hidden for SSR consistency (avoids hydration mismatch), then
+  // auto-show on desktop once the client has mounted.
+  const [showBrowser, setShowBrowser] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-dock the workspace panel on desktop after mount (client-only).
+  useEffect(() => {
+    if (window.innerWidth >= 1024) setShowBrowser(true);
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -234,6 +238,15 @@ export default function ChatPage() {
     showToast("Chat history cleared");
   };
 
+  const newChat = () => {
+    setMessages([]);
+    setSteps([]);
+    setApprovals([]);
+    setConversationId(null);
+    setTaskId(null);
+    setHeaderMenuOpen(false);
+  };
+
   const exportTranscript = () => {
     const data = JSON.stringify(messages, null, 2);
     const blob = new Blob([data], { type: "application/json" });
@@ -276,6 +289,15 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* New chat: start a fresh conversation without leaving the page */}
+            <button
+              onClick={newChat}
+              title="Start a new conversation"
+              className="chip chip-moss flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--accent-dark)] hover:brightness-95 cursor-pointer"
+            >
+              <Plus size={14} />
+              <span>New chat</span>
+            </button>
             {busy && (
               <span className="chip chip-moss flex items-center gap-1.5 px-3 py-1 text-xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />

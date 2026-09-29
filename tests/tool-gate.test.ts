@@ -84,8 +84,8 @@ describe("tool gate — safety rules", () => {
     expect(toolsForStep("What's the weather?", NO_HISTORY, 2)).toEqual(toolDefs());
   });
 
-  it("step 0 FULL decisions return the complete 26-tool registry", () => {
+  it("step 0 FULL decisions return the complete 27-tool registry", () => {
     expect(toolsForStep("Send it.", NO_HISTORY, 0)).toEqual(toolDefs());
-    expect(toolDefs().length).toBe(26);
+    expect(toolDefs().length).toBe(27);
   });
 });

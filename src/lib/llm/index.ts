@@ -7,7 +7,7 @@ import { openAICompatibleAdapter } from "./openai-compatible";
 // rate-limit/quota/capacity error, the next configured provider is tried —
 // so a free-tier quota wall no longer kills a running task mid-flight.
 const RATE_LIMIT_RE =
-  /quota|rate.?limit|exceeded|429|high demand|overloaded|capacity|too many requests/i;
+  /quota|rate.?limit|exceeded|429|502|503|504|bad gateway|gateway|unavailable|high demand|overloaded|capacity|too many requests|non-json response/i;
 
 function buildAdapter(provider: string): LLMAdapter {
   if (provider === "gemini") {
@@ -25,7 +25,7 @@ function buildAdapter(provider: string): LLMAdapter {
     return openAICompatibleAdapter({
       provider: "groq",
       apiKey: process.env.GROQ_API_KEY,
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
       baseUrl: "https://api.groq.com/openai/v1",
     });
   }
@@ -34,8 +34,17 @@ function buildAdapter(provider: string): LLMAdapter {
     return openAICompatibleAdapter({
       provider: "openrouter",
       apiKey: process.env.OPENROUTER_API_KEY,
-      model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat-v3.1:free",
+      model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
       baseUrl: "https://openrouter.ai/api/v1",
+    });
+  }
+  if (provider === "cleanapis") {
+    if (!process.env.CLEANAPIS_API_KEY) throw new Error("CLEANAPIS_API_KEY missing in .env");
+    return openAICompatibleAdapter({
+      provider: "cleanapis",
+      apiKey: process.env.CLEANAPIS_API_KEY,
+      model: process.env.CLEANAPIS_MODEL || "gemini-3.7-flash",
+      baseUrl: "https://cleanapis.com/v1",
     });
   }
   if (provider === "qwen") {
@@ -57,10 +66,11 @@ export function configuredProviders(): string[] {
   const order: string[] = [];
   const explicit = (process.env.LLM_PROVIDER || "").toLowerCase();
   if (explicit) order.push(explicit);
-  for (const p of ["gemini", "groq", "openrouter", "qwen"]) {
+  for (const p of ["cleanapis", "gemini", "groq", "openrouter", "qwen"]) {
     if (!order.includes(p)) order.push(p);
   }
   return order.filter((p) => {
+    if (p === "cleanapis") return Boolean(process.env.CLEANAPIS_API_KEY);
     if (p === "gemini") return Boolean(process.env.GEMINI_API_KEY);
     if (p === "groq") return Boolean(process.env.GROQ_API_KEY);
     if (p === "openrouter") return Boolean(process.env.OPENROUTER_API_KEY);

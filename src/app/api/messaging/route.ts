@@ -4,6 +4,9 @@ import {
   sendTestMessage,
   telegramConfigured,
   whatsappConfigured,
+  setTelegramWebhook,
+  deleteTelegramWebhook,
+  getTelegramWebhookInfo,
 } from "@/lib/connectors/messaging";
 import { putSecret } from "@/lib/vault";
 import { db, now, uuid, audit } from "@/lib/db";
@@ -28,10 +31,11 @@ function upsertGrant(connector: string, accountEmail: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { action, channel, token } = (await req.json()) as {
+  const { action, channel, token, webhookUrl } = (await req.json()) as {
     action: string;
     channel?: "telegram" | "whatsapp";
     token?: string;
+    webhookUrl?: string;
   };
 
   if (action === "resolve_telegram_chat") {
@@ -74,6 +78,48 @@ export async function POST(req: NextRequest) {
     db.prepare("DELETE FROM connector_grants WHERE connector = ?").run(channel);
     audit("connectors", `${channel}.disconnected`, { risk: "medium" });
     return NextResponse.json({ ok: true, message: `${channel} disconnected` });
+  }
+
+  if (action === "set_telegram_webhook") {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      return NextResponse.json({ ok: false, message: "TELEGRAM_BOT_TOKEN is not set in .env" }, { status: 400 });
+    }
+    let targetBase = webhookUrl || process.env.NEXT_PUBLIC_APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "");
+    if (!targetBase) {
+      const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+      const proto = req.headers.get("x-forwarded-proto") || "https";
+      if (host) targetBase = `${proto}://${host}`;
+    }
+    if (!targetBase) {
+      return NextResponse.json({
+        ok: false,
+        message: "Could not determine public app URL. Set NEXT_PUBLIC_APP_URL in Railway variables or pass webhookUrl.",
+      }, { status: 400 });
+    }
+    const cleanBase = targetBase.replace(/\/$/, "");
+    const fullWebhookUrl = `${cleanBase}/api/telegram/webhook`;
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    const result = await setTelegramWebhook(fullWebhookUrl, secret);
+    if (result.ok) {
+      audit("connectors", "telegram.webhook_registered", { detail: fullWebhookUrl });
+    }
+    return NextResponse.json({ ...result, url: fullWebhookUrl });
+  }
+
+  if (action === "get_telegram_webhook") {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      return NextResponse.json({ ok: false, message: "TELEGRAM_BOT_TOKEN is not set in .env" }, { status: 400 });
+    }
+    const info = await getTelegramWebhookInfo();
+    return NextResponse.json(info);
+  }
+
+  if (action === "delete_telegram_webhook") {
+    if (!process.env.TELEGRAM_BOT_TOKEN) {
+      return NextResponse.json({ ok: false, message: "TELEGRAM_BOT_TOKEN is not set in .env" }, { status: 400 });
+    }
+    const result = await deleteTelegramWebhook();
+    return NextResponse.json(result);
   }
 
   return NextResponse.json({ ok: false, message: "unknown action" }, { status: 400 });

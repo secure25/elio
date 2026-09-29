@@ -120,9 +120,9 @@ describe("monitors lifecycle", () => {
 });
 
 describe("sentinel classes", () => {
-  it("classifies scheduled delivery as allow and real sends as ask", () => {
+  it("classifies scheduled delivery as allow and owner sends as allow", () => {
     expect(classify("message.send_reminder").decision).toBe("allow");
     expect(classify("monitor.run").decision).toBe("allow");
-    expect(classify("message.send").decision).toBe("ask");
+    expect(classify("message.send").decision).toBe("allow");
   });
 });

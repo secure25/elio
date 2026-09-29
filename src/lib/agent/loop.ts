@@ -59,7 +59,7 @@ const TOOL_GATING = true;
 
 // Explicit tool-name mention → always FULL (user/prompt escape hatch).
 const TOOL_NAMES =
-  /\b(web_search|web_fetch|browser_goto|browser_read|browser_click|browser_fill|browser_submit|gmail_list|gmail_read|gmail_send|calendar_list|calendar_create|calendar_delete|send_telegram|send_whatsapp|set_reminder|list_reminders|cancel_reminder|create_monitor|list_monitors|pause_or_resume_monitor|stop_monitor|remember|forget|task_retry|task_complete)\b/i;
+  /\b(web_search|web_fetch|browser_goto|browser_read|browser_scroll|browser_click|browser_fill|browser_submit|gmail_list|gmail_read|gmail_send|calendar_list|calendar_create|calendar_delete|send_telegram|send_whatsapp|set_reminder|list_reminders|cancel_reminder|create_monitor|list_monitors|pause_or_resume_monitor|stop_monitor|remember|forget|task_retry|task_complete)\b/i;
 
 // Pure small talk / meta-conversation — matches the WHOLE message only, so a
 // greeting with any task attached ("hi, search flights") does NOT match.
@@ -228,6 +228,16 @@ export async function runAgent(
         opts.taskId
       );
       messages.push({ role: "tool", content: String(result).slice(0, 12_000), toolCallId: tc.id, toolName: tc.name });
+      if (tc.name === "browser_goto" || tc.name === "browser_read" || tc.name === "browser_click") {
+        for (let i = 0; i < messages.length - 1; i++) {
+          const m = messages[i];
+          if (m.role === "tool" && (m.toolName === "browser_goto" || m.toolName === "browser_read" || m.toolName === "browser_click")) {
+            if (m.content.length > 350) {
+              m.content = m.content.slice(0, 250) + "\n[Older page snapshot compacted to preserve context space]";
+            }
+          }
+        }
+      }
 
       // task_complete is terminal: finish immediately with its summary.
       if (tc.name === "task_complete" && result.startsWith("COMPLETE:")) {

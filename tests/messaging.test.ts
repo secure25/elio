@@ -28,8 +28,9 @@ const withEnv = (vars: Record<string, string | undefined>, fn: () => void | Prom
 };
 
 describe("Sentinel rules for messaging", () => {
-  it("gates real sends behind approval but allows the owner test ping", () => {
-    expect(classify("message.send")).toEqual({ risk: "high", decision: "ask", reason: expect.any(String) });
+  it("allows owner sends and owner test ping directly", () => {
+    expect(classify("message.send")).toEqual({ risk: "low", decision: "allow", reason: expect.any(String) });
+    expect(classify("message.send_digest")).toEqual({ risk: "medium", decision: "allow", reason: expect.any(String) });
     expect(classify("message.send_test")).toEqual({ risk: "low", decision: "allow", reason: expect.any(String) });
   });
 });
@@ -46,7 +47,7 @@ describe("Telegram send", () => {
     });
   });
 
-  it("requires Sentinel approval and delivers after it is granted (mocked API)", async () => {
+  it("delivers directly without approval gate (mocked API)", async () => {
     await withEnv({ TELEGRAM_BOT_TOKEN: "test-token" }, async () => {
       saveTelegramChat(123456);
       const fetchMock = vi.fn(async (url: any, init?: any) => {
@@ -57,33 +58,12 @@ describe("Telegram send", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      // The guard runs synchronously inside sendTelegram → approval row exists immediately.
-      const sendPromise = sendTelegram(null, null, "Dinner booked for 7pm ✅");
-      await new Promise((r) => setTimeout(r, 50));
-      approveAll();
-
-      const out = await sendPromise;
+      const out = await sendTelegram(null, null, "Dinner booked for 7pm ✅");
       expect(out).toMatch(/Sent via Telegram/);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const called = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
       expect(called.text).toContain("Dinner booked");
       expect(String(called.chat_id)).toBe("123456");
-    });
-  });
-
-  it("does not send when approval is denied", async () => {
-    await withEnv({ TELEGRAM_BOT_TOKEN: "test-token" }, async () => {
-      saveTelegramChat(123456);
-      const fetchMock = vi.fn();
-      vi.stubGlobal("fetch", fetchMock);
-
-      const sendPromise = sendTelegram(null, null, "should never send");
-      await new Promise((r) => setTimeout(r, 50));
-      db.prepare("UPDATE approvals SET status='denied', resolved_at=? WHERE status='pending'").run(now());
-
-      const out = await sendPromise;
-      expect(out).toMatch(/NOT sent/i);
-      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
@@ -94,10 +74,7 @@ describe("Telegram send", () => {
         "fetch",
         vi.fn(async () => new Response(JSON.stringify({ ok: false, description: "chat not found" }), { status: 400 }))
       );
-      const p = sendTelegram(null, null, "err case");
-      await new Promise((r) => setTimeout(r, 50));
-      approveAll();
-      const out = await p;
+      const out = await sendTelegram(null, null, "err case");
       expect(out).toMatch(/Telegram send failed: chat not found/);
     });
   });
@@ -112,17 +89,13 @@ describe("WhatsApp send", () => {
     });
   });
 
-  it("requires approval and sends after it is granted (mocked Graph API)", async () => {
+  it("delivers directly when connected (mocked Graph API)", async () => {
     await withEnv({ WHATSAPP_TOKEN: "wa-token", WHATSAPP_PHONE_ID: "phone-123" }, async () => {
       putSecret("whatsapp_to", "messaging", "15551234567");
       const fetchMock = vi.fn(async () => new Response(JSON.stringify({ messaging_product: "whatsapp", contacts: [{ wa_id: "15551234567" }] }), { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
-      const p = sendWhatsApp(null, null, "Your order is confirmed 🎉");
-      await new Promise((r) => setTimeout(r, 50));
-      approveAll();
-      const out = await p;
-
+      const out = await sendWhatsApp(null, null, "Your order is confirmed 🎉");
       expect(out).toMatch(/Sent via WhatsApp/);
       const [url, init] = fetchMock.mock.calls[0] as any;
       expect(url).toContain("graph.facebook.com/v21.0/phone-123/messages");

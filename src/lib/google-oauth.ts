@@ -97,6 +97,29 @@ export function listGrants() {
     .all();
 }
 
+function decryptStoredToken(
+  stored: string,
+  legacyIv?: string | null,
+  legacyTag?: string | null
+): string {
+  try {
+    const obj = JSON.parse(stored);
+    if (obj.ciphertext && obj.iv && obj.tag) {
+      return decrypt(obj);
+    }
+  } catch {
+    // legacy format: stored is raw ciphertext, iv & tag in separate columns
+  }
+  if (legacyIv && legacyTag) {
+    return decrypt({
+      ciphertext: stored,
+      iv: legacyIv,
+      tag: legacyTag,
+    });
+  }
+  throw new Error("Cannot decrypt token: missing IV or auth tag");
+}
+
 export async function saveGrant(
   connector: string,
   scopes: string[],
@@ -105,6 +128,9 @@ export async function saveGrant(
 ) {
   const encAccess = encrypt(tok.access_token || "");
   const encRefresh = tok.refresh_token ? encrypt(tok.refresh_token) : null;
+  const accessPayload = JSON.stringify(encAccess);
+  const refreshPayload = encRefresh ? JSON.stringify(encRefresh) : null;
+
   db.prepare(
     `INSERT INTO connector_grants (id, connector, scopes, status, account_email,
       access_token_enc, refresh_token_enc, token_iv, token_tag, expires_at, created_at, updated_at)
@@ -120,8 +146,8 @@ export async function saveGrant(
     scopes.join(" "),
     "connected",
     accountEmail,
-    encAccess.ciphertext,
-    encRefresh ? encRefresh.ciphertext : null,
+    accessPayload,
+    refreshPayload,
     encAccess.iv,
     encAccess.tag,
     now() + (tok.expires_in || 3600) * 1000,
@@ -137,24 +163,35 @@ export async function getAccessToken(connector: string): Promise<string> {
   if (!grant || grant.status !== "connected" || !grant.access_token_enc) {
     throw new Error(`${connector} is not connected. Connect it on the Connectors page.`);
   }
+
+  // If access token is still valid (> 60s remaining), use it
   if (grant.expires_at && grant.expires_at - now() > 60_000) {
-    return decrypt({
-      ciphertext: grant.access_token_enc,
-      iv: grant.token_iv!,
-      tag: grant.token_tag!,
-    });
+    try {
+      return decryptStoredToken(grant.access_token_enc, grant.token_iv, grant.token_tag);
+    } catch {
+      // Access token decryption failed; fall through to refresh
+    }
   }
-  if (!grant.refresh_token_enc) throw new Error(`${connector} grant has no refresh token`);
-  const refreshToken = decrypt({
-    ciphertext: grant.refresh_token_enc,
-    iv: grant.token_iv!,
-    tag: grant.token_tag!,
-  });
+
+  if (!grant.refresh_token_enc) {
+    throw new Error(`${connector} access token expired and no refresh token exists. Please reconnect ${connector} on the Connectors page.`);
+  }
+
+  let refreshToken: string;
+  try {
+    refreshToken = decryptStoredToken(grant.refresh_token_enc, grant.token_iv, grant.token_tag);
+  } catch (err: any) {
+    throw new Error(
+      `${connector} refresh token could not be decrypted (${err.message}). Please reconnect ${connector} on the Connectors page.`
+    );
+  }
+
   const tok = await refreshAccessToken(refreshToken);
   const enc = encrypt(tok.access_token!);
+  const accessPayload = JSON.stringify(enc);
   db.prepare(
     "UPDATE connector_grants SET access_token_enc=?, token_iv=?, token_tag=?, expires_at=?, updated_at=? WHERE connector=?"
-  ).run(enc.ciphertext, enc.iv, enc.tag, now() + (tok.expires_in || 3600) * 1000, now(), connector);
+  ).run(accessPayload, enc.iv, enc.tag, now() + (tok.expires_in || 3600) * 1000, now(), connector);
   return tok.access_token!;
 }
 

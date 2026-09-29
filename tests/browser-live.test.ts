@@ -5,6 +5,9 @@ process.env.MUSE_DATA_DIR = "./data-test";
 
 import {
   browserGoto,
+  browserRead,
+  browserFill,
+  browserScroll,
   latestLiveFrame,
   browserStatus,
   closeBrowser,
@@ -58,6 +61,51 @@ maybe("live browser frames", () => {
         const frame = latestLiveFrame();
         expect(frame).not.toBeNull();
         expect(browserStatus().url).toContain("data:text/html");
+      } catch (e: any) {
+        if (/Executable doesn't exist|browserType\.launch|Failed to launch/i.test(e.message)) {
+          return;
+        }
+        throw e;
+      }
+    },
+    60_000
+  );
+
+  it(
+    "scrolls and captures live frame",
+    async () => {
+      try {
+        await browserGoto(null, "data:text/html,<body style='height:3000px'><h1>Scrollable</h1><p style='margin-top:1500px'>Scrolled content</p></body>");
+        const res = await browserScroll(null, "down", 500);
+        expect(res).toContain("Scrolled down");
+        expect(res).toContain("Viewport vertical position");
+        const frame = latestLiveFrame();
+        expect(frame).not.toBeNull();
+      } catch (e: any) {
+        if (/Executable doesn't exist|browserType\.launch|Failed to launch/i.test(e.message)) {
+          return;
+        }
+        throw e;
+      }
+    },
+    60_000
+  );
+
+  it(
+    "fills form inputs and captures live frame",
+    async () => {
+      try {
+        await browserGoto(
+          null,
+          "data:text/html,<body><form><label for='name'>Name:</label><input id='name' placeholder='Your name'/><textarea id='bio' placeholder='About you'></textarea></form></body>"
+        );
+        const state = await browserRead(null);
+        expect(state).toContain("Interactive elements");
+        const fillRes = await browserFill(null, "e1", "Elio Agent");
+        expect(fillRes).toContain("Filled e1");
+        expect(fillRes).toContain("Elio Agent");
+        const frame = latestLiveFrame();
+        expect(frame).not.toBeNull();
       } catch (e: any) {
         if (/Executable doesn't exist|browserType\.launch|Failed to launch/i.test(e.message)) {
           return;

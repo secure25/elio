@@ -42,19 +42,63 @@ export function openAICompatibleAdapter(opts: {
         }));
       }
 
-      const res = await fetch(`${opts.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${opts.apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
-      const json = (await res.json()) as {
+      // Resilience: (a) retry once on transient transport failures (a dropped
+      // connection to a self-hosted endpoint killed the whole task otherwise);
+      // (b) a 300s hard timeout so a hung endpoint fails cleanly instead of
+      // hanging forever. Retries only the POST — never the response parsing —
+      // and is safe because these requests are idempotent completions calls.
+      const post = () =>
+        fetch(`${opts.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${opts.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(300_000),
+        });
+      let res: Response;
+      try {
+        res = await post();
+      } catch (e: unknown) {
+        const transient = e instanceof Error && /fetch failed|network|ECONN|terminated|timeout|aborted/i.test(String(e.message));
+        if (!transient) throw e;
+        await new Promise((r) => setTimeout(r, 2000));
+        res = await post();
+      }
+
+      // If rate-limited (429), respect retry headers and retry once before erroring or failing over.
+      if (res.status === 429) {
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryTokensHeader = res.headers.get("x-ratelimit-reset-tokens");
+        let delayMs = 3000;
+        if (retryAfterHeader) {
+          const parsed = parseFloat(retryAfterHeader);
+          if (!isNaN(parsed) && parsed > 0) delayMs = Math.min(Math.ceil(parsed * 1000) + 500, 10_000);
+        } else if (retryTokensHeader) {
+          const parsed = parseFloat(retryTokensHeader.replace("s", ""));
+          if (!isNaN(parsed) && parsed > 0) delayMs = Math.min(Math.ceil(parsed * 1000) + 500, 10_000);
+        }
+        await new Promise((r) => setTimeout(r, delayMs));
+        res = await post();
+      }
+
+      const rawText = await res.text();
+      let json: {
         choices?: { message?: { content?: string | null; tool_calls?: [] } }[];
         usage?: { prompt_tokens?: number; completion_tokens?: number };
         error?: { message?: string };
       };
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        throw new Error(
+          `${opts.provider} returned non-JSON response (HTTP ${res.status}): ${
+            res.statusText || rawText.slice(0, 100).replace(/\s+/g, " ")
+          }`
+        );
+      }
+
       if (!res.ok || json.error) {
         throw new Error(`${opts.provider} API error: ${json.error?.message || res.status}`);
       }

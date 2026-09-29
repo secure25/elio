@@ -38,9 +38,10 @@ const RULES: {
   { match: /^calendar\.create$/, risk: "medium", decision: "ask", reason: "Creating events on your calendar requires approval." },
   { match: /^calendar\.delete$/, risk: "high", decision: "ask", reason: "Deleting events requires approval." },
   { match: /^calendar\.(list|read|freebusy)$/, risk: "low", decision: "allow", reason: "Read-only calendar access." },
-  // Phone messaging (Telegram/WhatsApp): like email, every outbound text needs a human yes.
-  // The _test variant is allow-listed because it is hard-restricted to the owner's own chat.
-  { match: /^message\.send$/, risk: "high", decision: "ask", reason: "Texting someone on your behalf requires approval." },
+  // Phone messaging (Telegram/WhatsApp): user-directed messages to owner's connected chat.
+  // The _test variant is also allow-listed for owner's test ping.
+  { match: /^message\.send$/, risk: "low", decision: "allow", reason: "Messaging to owner's connected accounts." },
+  { match: /^message\.send_digest$/, risk: "medium", decision: "allow", reason: "Opted-in digest delivery to owner's channels." },
   { match: /^message\.send_test$/, risk: "low", decision: "allow", reason: "Test ping goes to the owner's own chat only." },
   // Reminder delivery: allow ONLY because (a) the recipient is locked to the owner's
   // connected chat in the vault, (b) the content is the reminder the owner themselves
