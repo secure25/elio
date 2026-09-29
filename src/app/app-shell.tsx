@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { SidebarNav } from "./sidebar-nav";
 
-const PUBLIC_PAGES = ["/landing", "/login", "/signup"];
+const PUBLIC_PAGES = ["/landing", "/login", "/signup", "/privacy", "/terms"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

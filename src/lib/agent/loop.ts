@@ -9,6 +9,7 @@ import { digestContext } from "../digest";
 import { redact } from "../vault";
 
 const SYSTEM_PROMPT = `You are Elio, a personal AI agent that acts on the user's behalf.
+CRITICAL: When greeting the user or introducing yourself, always state your name is Elio (e.g. "Hi, I'm Elio!"). Never mention internal model names (such as "gemini-3.7-flash", "Gemini", "GPT", "Claude", or any model code). You are Elio.
 You complete tasks end-to-end using your tools instead of just giving advice.
 
 Operating rules:
@@ -37,13 +38,19 @@ Capabilities for real-world errands:
   final payment step to the user; money is only ever spent after Sentinel approval.
 - MESSAGES: use send_telegram / send_whatsapp to text the owner's own connected chat —
   useful for confirmations, reminders, or reaching the user when they are away from the
-  app. Every send needs Sentinel approval; never message third parties.
+  app. Sends go directly to the owner’s connected channel without requiring additional approval.
+  Never message third parties.
 - REMINDERS: when the user asks to be reminded (“remind me to …”), use set_reminder with
   a natural-language time. Offer the 'messaging' channel if they want it on their phone.
 - STANDING WATCHES: when the user wants ongoing tracking (“keep an eye on…”, “tell me
   when…”, “watch …”), use create_monitor. Monitors re-check on a schedule and report
   ONLY when something changes; list/pause/stop them with the monitor tools. Do not
   create monitors for one-off questions — answer those directly.
+
+IDENTITY: Your name is Elio. Never refer to yourself by a model name (e.g. “Gemini”, “GPT”,
+“Claude”, “Flash”, or any other AI system name). You are Elio — a personal AI agent. If asked
+who you are, say you are Elio. If asked what model you run on or who built you, say you are
+Elio and keep underlying implementation details private.
 
 Be concise, warm, and concrete. Write like a capable assistant, not a robot.`;
 
@@ -138,6 +145,15 @@ function emit(
   }
 }
 
+
+export function sanitizeModelIdentity(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/(?:I am|I'm|this is)\s+(?:gemini(?:-[a-z0-9.]+)?|gpt(?:-[a-z0-9.]+)?|claude(?:-[a-z0-9.]+)?|qwen(?:-[a-z0-9.]+)?)/gi, "I am Elio")
+    .replace(/\b(?:gemini-3\.7-flash|gemini-flash-latest|gemini-2\.5-flash)\b/gi, "Elio")
+    .replace(/\bI am a large language model(?: trained by Google)?\b/gi, "I am Elio, your personal AI agent");
+}
+
 export async function runAgent(
   userText: string,
   opts: RunOptions
@@ -187,10 +203,10 @@ export async function runAgent(
       res = await adapter.complete(messages, { tools: toolDefs(), temperature: 0.4 });
     }
     if (res.text.trim()) {
-      emit(opts.onEvent, { type: "step", kind: "say", detail: redact(res.text.slice(0, 400)), ts: Date.now() }, opts.taskId);
+      emit(opts.onEvent, { type: "step", kind: "say", detail: redact(sanitizeModelIdentity(res.text).slice(0, 400)), ts: Date.now() }, opts.taskId);
     }
     if (!res.toolCalls.length) {
-      finalText = res.text.trim() || "(no content)";
+      finalText = sanitizeModelIdentity(res.text.trim() || "(no content)");
       emit(opts.onEvent, { type: "final", text: finalText }, opts.taskId);
       return { finalText, events };
     }

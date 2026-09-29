@@ -5,11 +5,15 @@ const PUBLIC_PATHS = [
   "/landing",
   "/login",
   "/signup",
+  "/privacy",
+  "/terms",
   "/api/auth",
   "/api/oauth",
   "/_next",
   "/favicon.ico",
   "/manifest.webmanifest",
+  "/elio-icon.png",
+  "/elio-logo.png",
   "/elio-app-icon.png",
 ];
 

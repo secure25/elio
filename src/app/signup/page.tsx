@@ -183,6 +183,16 @@ export default function SignupPage() {
             </p>
           </div>
         </div>
+
+        <div className="mt-8 flex items-center justify-center gap-5 text-xs text-[var(--text-muted)]">
+          <Link href="/privacy" className="hover:text-[var(--text)] transition-colors">
+            Privacy Policy
+          </Link>
+          <span>•</span>
+          <Link href="/terms" className="hover:text-[var(--text)] transition-colors">
+            Terms of Service
+          </Link>
+        </div>
       </div>
     </div>
   );

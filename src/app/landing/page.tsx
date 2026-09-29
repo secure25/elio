@@ -119,8 +119,18 @@ export default function LandingPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--border)] px-6 py-6 text-center text-xs text-[var(--text-muted)]">
-        <p>Elio · A calm, intelligent operations workspace for personal agency.</p>
+      <footer className="border-t border-[var(--border)] px-6 py-6 text-xs text-[var(--text-muted)]">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p>© {new Date().getFullYear()} Elio · A calm, intelligent operations workspace for personal agency.</p>
+          <div className="flex items-center gap-6">
+            <Link href="/privacy" className="hover:text-[var(--text)] transition-colors">
+              Privacy Policy
+            </Link>
+            <Link href="/terms" className="hover:text-[var(--text)] transition-colors">
+              Terms of Service
+            </Link>
+          </div>
+        </div>
       </footer>
     </div>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   User,
@@ -944,7 +945,7 @@ export default function SettingsPage() {
                     </button>
                   </div>
 
-                  <div className="pt-2 flex justify-between items-center">
+                  <div className="pt-2 flex justify-between items-center pb-4 border-b border-[var(--border)]">
                     <div>
                       <div className="text-xs font-semibold text-[var(--action)]">Clear Cache & Temporary Artifacts</div>
                       <div className="text-[11px] text-[var(--muted)]">Remove cached screenshots and browser traces</div>
@@ -955,6 +956,19 @@ export default function SettingsPage() {
                     >
                       Purge Cache
                     </button>
+                  </div>
+
+                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                    <span className="text-[var(--muted)]">Official Legal &amp; Compliance Agreements:</span>
+                    <div className="flex items-center gap-4">
+                      <Link href="/privacy" className="text-[var(--accent)] hover:underline font-medium">
+                        Privacy Policy
+                      </Link>
+                      <span className="text-[var(--muted)]">•</span>
+                      <Link href="/terms" className="text-[var(--accent)] hover:underline font-medium">
+                        Terms of Service
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </div>
