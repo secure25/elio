@@ -9,6 +9,10 @@ const PUBLIC_PATHS = [
   "/terms",
   "/api/auth",
   "/api/oauth",
+  // Telegram's servers POST here (no session cookie exists for them). The
+  // route authenticates itself via the x-telegram-bot-api-secret-token header
+  // when TELEGRAM_WEBHOOK_SECRET is set.
+  "/api/telegram/webhook",
   "/_next",
   "/favicon.ico",
   "/manifest.webmanifest",
