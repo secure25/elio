@@ -19,7 +19,8 @@ let _db: DatabaseSync | null = null;
 function openDb(): DatabaseSync {
   if (_db) return _db;
   fs.mkdirSync(dataDir, { recursive: true });
-  const d = new DatabaseSync(path.join(dataDir, "muse.db"));
+  const dbPath = path.join(dataDir, "muse.db");
+  const d = new DatabaseSync(dbPath);
   d.exec("PRAGMA journal_mode = WAL;");
   d.exec("PRAGMA foreign_keys = ON;");
   // Bound how long a writer waits on a transient lock instead of failing
@@ -182,7 +183,10 @@ CREATE INDEX IF NOT EXISTS idx_steps_task ON task_steps(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
   `);
   _db = d;
-  return d;
+  // Make the resolved data location visible in deploy logs — on platforms like
+  // Railway this is how you verify the DB actually lives on a mounted volume
+  // (a path outside the volume means every redeploy silently wipes all data).
+  console.log(`[elio] database: ${dbPath}`);  return d;
 }
 
 // Type-preserving lazy handle: `db` keeps its DatabaseSync type so every
