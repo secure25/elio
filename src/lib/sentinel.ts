@@ -28,6 +28,10 @@ const RULES: {
   reason: string;
 }[] = [
   { match: /^payment\./, risk: "high", decision: "ask", reason: "Spending money always requires explicit human approval." },
+  // MoltMoney financial actions (Phase 2A): reads are low-risk lookups;
+  // anything that moves money through MoltMoney/PayPal always asks.
+  { match: /^finance\.read$/, risk: "low", decision: "allow", reason: "Read-only financial lookups via MoltMoney." },
+  { match: /^finance\.pay$/, risk: "high", decision: "ask", reason: "Spending money via MoltMoney/PayPal requires explicit human approval." },
   { match: /^gmail\.send$/, risk: "high", decision: "ask", reason: "Sending email on your behalf requires approval." },
   // Digest delivery: allow ONLY because (a) the user explicitly opted in via the Digest
   // page toggle, (b) the connector hard-restricts the recipient to the connected account
