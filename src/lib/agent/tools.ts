@@ -367,3 +367,146 @@ export function getTool(name: string): AgentTool | undefined {
 export function toolDefs(): ToolDef[] {
   return TOOLS.map((t) => t.def);
 }
+
+// ── MoltMoney financial tools (Phase 1: READ-ONLY) ──────────────────────
+// Registered only when the MoltMoney connector is fully configured via env
+// (MOLTMONEY_API_URL + MOLTMONEY_API_KEY + MOLTMONEY_ACCOUNT_ID) and not
+// kill-switched with MOLTMONEY_ENABLED=false. Phase 2 money-moving tools will
+// additionally require MOLTMONEY_ENABLED="true" explicitly and Sentinel
+// approval before any money can move. Missing config → tools absent → the
+// model never sees them (fail closed by non-registration).
+function moltmoneyReadonlyEnabled(): boolean {
+  if ((process.env.MOLTMONEY_ENABLED || "").trim().toLowerCase() === "false") return false;
+  return Boolean(
+    (process.env.MOLTMONEY_API_URL || "").trim() &&
+      (process.env.MOLTMONEY_API_KEY || "").trim() &&
+      (process.env.MOLTMONEY_ACCOUNT_ID || "").trim()
+  );
+}
+
+if (moltmoneyReadonlyEnabled()) {
+  TOOLS.push(
+    {
+      def: {
+        name: "moltmoney_get_account",
+        description:
+          "Show the connected MoltMoney account: type, status, currency, balance, account number. Read-only.",
+        parameters: { type: "object", properties: {} },
+      },
+      run: () => import("../connectors/moltmoney").then((m) => m.moltmoneyGetAccount()),
+    },
+    {
+      def: {
+        name: "moltmoney_get_balance",
+        description: "Show the current MoltMoney balance. Read-only.",
+        parameters: { type: "object", properties: {} },
+      },
+      run: () => import("../connectors/moltmoney").then((m) => m.moltmoneyGetBalance()),
+    },
+    {
+      def: {
+        name: "moltmoney_get_transactions",
+        description: "List recent MoltMoney transactions. Read-only.",
+        parameters: {
+          type: "object",
+          properties: { limit: { type: "number", description: "Max transactions (default 10, max 50)" } },
+        },
+      },
+      run: (_ctx, a) =>
+        import("../connectors/moltmoney").then((m) => m.moltmoneyGetTransactions(a?.limit)),
+    },
+    {
+      def: {
+        name: "moltmoney_get_spending_rules",
+        description:
+          "Retrieve Elio's CURRENT spending policy from MoltMoney (single source of truth): per-transaction limit, daily limit, require-approval-above threshold, blocked categories, plus server-computed daily usage (spent today, remaining today, server time). Call this BEFORE attempting any purchase. Blocked categories are HARD prohibitions: refuse them before any approval request or order — never route them into approval. Limit/threshold violations are different: soft, may still need owner approval at capture. Read-only.",
+        parameters: { type: "object", properties: {} },
+      },
+      run: () => import("../connectors/moltmoney").then((m) => m.moltmoneyGetSpendingRules()),
+    }
+  );
+}
+
+// ── MoltMoney money-moving tools (Phase 2A: PayPal purchase flow) ────────
+// Registered ONLY when MOLTMONEY_ENABLED is explicitly "true" (stricter than
+// the read-only gate) AND full creds are present. Every money-moving call is
+// Sentinel-gated inside the connector (finance.pay → human approval card);
+// the human decision happens before any HTTP request reaches MoltMoney.
+// The tool surface stays READ-ONLY toward PayPal: Elio never sees or handles
+// PayPal credentials, card data, or webhooks — MoltMoney owns all of that.
+function moltmoneyMoneyEnabled(): boolean {
+  if ((process.env.MOLTMONEY_ENABLED || "").trim().toLowerCase() !== "true") return false;
+  return Boolean(
+    (process.env.MOLTMONEY_API_URL || "").trim() &&
+      (process.env.MOLTMONEY_API_KEY || "").trim() &&
+      (process.env.MOLTMONEY_ACCOUNT_ID || "").trim()
+  );
+}
+
+if (moltmoneyMoneyEnabled()) {
+  TOOLS.push(
+    {
+      def: {
+        name: "moltmoney_get_payment",
+        description:
+          "Get one MoltMoney transaction by id (status, amount, currency, merchant). Read-only.",
+        parameters: {
+          type: "object",
+          properties: { transaction_id: str("MoltMoney transaction id (or PayPal order id)") },
+          required: ["transaction_id"],
+        },
+      },
+      run: (_ctx, a) =>
+        import("../connectors/moltmoney").then((m) => m.moltmoneyGetPayment(a.transaction_id)),
+    },
+    {
+      def: {        name: "moltmoney_create_paypal_order",
+        description:
+          "Start a PayPal purchase via MoltMoney. Check moltmoney_get_spending_rules FIRST. HARD PROHIBITION: if the purchase falls in a blocked category, or you cannot determine a category while blocked categories are configured, REFUSE — never create a Sentinel approval request and never call this tool; blocked categories must never reach any approval mechanism. SOFT POLICY: if the amount may exceed a limit or the require-approval-above threshold, tell the user MoltMoney may require additional owner approval before capture. ALWAYS classify the purchase and pass merchant_category (required whenever blocked categories are configured; MoltMoney rejects orders without one; Elio's classification is advisory — MoltMoney is the enforcement layer). REQUIRES HUMAN APPROVAL via Sentinel. Returns a transaction id and a PayPal approval URL the USER must open and approve before capture.",
+        parameters: {
+          type: "object",
+          properties: {
+            amount: str("Amount as a decimal string, e.g. \"5.00\" (never a float)"),
+            currency: str("ISO currency code, e.g. USD (default USD)"),
+            description: str("What is being purchased (max 500 chars)"),
+            merchant_name: str("Merchant name (max 100 chars)"),
+            merchant_category: str("Purchase category as classified by Elio, e.g. books, groceries (max 50 chars). REQUIRED when the account has blocked categories; MoltMoney rejects orders without one."),
+            return_url: str("Optional URL PayPal returns to after approval"),
+            cancel_url: str("Optional URL PayPal returns to on cancel"),
+          },
+          required: ["amount"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneyCreatePaypalOrder(ctx, {
+            amount: a.amount,
+            currency: a.currency,
+            description: a.description,
+            merchantName: a.merchant_name,
+            merchantCategory: a.merchant_category,
+            returnUrl: a.return_url,
+            cancelUrl: a.cancel_url,
+          })
+        ),
+    },
+    {
+      def: {
+        name: "moltmoney_capture_paypal_order",
+        description:
+          "Capture an APPROVED PayPal order via MoltMoney. REQUIRES HUMAN APPROVAL. Use only after the user confirmed they approved it on PayPal; the id must be the transaction/order id from the create step.",
+        parameters: {
+          type: "object",
+          properties: {
+            transaction_id: str("MoltMoney transaction id (or PayPal order id) from moltmoney_create_paypal_order"),
+          },
+          required: ["transaction_id"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneyCapturePaypalOrder(ctx, a.transaction_id)
+        ),
+    }
+  );
+}
