@@ -1,4 +1,4 @@
-// ── MoltMoney connector (Phase 1 read-only + Phase 2A PayPal purchase) ────
+// ── MoltMoney connector (Phase 1 read-only + Phase 2A money movement) ────
 // Thin authenticated client for the MoltMoney Agent Banking API.
 //
 // Scope:
@@ -18,6 +18,7 @@
 //   GET  /transactions/{id}                        → single transaction
 //   POST /payments/paypal/orders                   → { transaction, orderId, approvalUrl, state }
 //   POST /payments/paypal/orders/{orderId}/capture → { transaction } (idempotent)
+//   POST /payments/send                            → { transaction } (internal transfer)
 //
 // Configuration (all required, all server-side):
 //   MOLTMONEY_API_URL      e.g. https://<host> (no trailing slash needed)
@@ -569,6 +570,124 @@ export async function moltmoneyCapturePaypalOrder(ctx: ToolContext, transactionI
     t.amount !== undefined ? `amount: ${t.amount} ${t.currency ?? ""}` : "",
     t.providerRefId ? `paypal order: ${t.providerRefId}` : "",
     t.status === "COMPLETED" ? "Payment completed — verify in MoltMoney balance/transactions." : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * POST /payments/send — internal transfer from the agent's MoltMoney account
+ * to another MoltMoney account (NOT a merchant purchase; use
+ * moltmoney_create_paypal_order for those). Sentinel: finance.pay (high/ask)
+ * BEFORE any HTTP call — unlike PayPal create-order (which only mints a
+ * PENDING transaction), this single call MOVES money immediately. No retries,
+ * ever: a retried send could double-send with no idempotency key.
+ *
+ * Category semantics differ from the PayPal purchase flow: an internal
+ * transfer has no merchant, so a merchantCategory is NOT required here and
+ * its absence is NOT treated as a policy failure. But if Elio DOES classify
+ * the transfer into a blocked category, it refuses pre-Sentinel — a hard
+ * prohibition must never reach an approval mechanism. Elio's check is
+ * advisory UX only; MoltMoney independently re-checks spending rules
+ * server-side (and may hold the transfer for owner approval) and is the
+ * security control. Policy fetch failing ⇒ fail closed, no approval, no call.
+ */
+export async function moltmoneySendPayment(
+  ctx: ToolContext,
+  args: {
+    amount?: string;
+    toAccountId?: string;
+    description?: string;
+    merchantName?: string;
+    merchantCategory?: string;
+  }
+): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "send_payment");
+
+  // ── Fail-closed validation BEFORE Sentinel and BEFORE any network call ──
+  const amount = String(args.amount ?? "").trim();
+  if (!DECIMAL_RE.test(amount) || Number(amount) <= 0) {
+    return fail(
+      `Invalid amount "${args.amount ?? ""}": use a positive decimal string like "5.00" (transfer not started).`,
+      "send_payment"
+    );
+  }
+  const toAccountId = String(args.toAccountId ?? "").trim().slice(0, 100) || undefined;
+  const description = String(args.description ?? "").slice(0, 500) || undefined;
+  const merchantName = String(args.merchantName ?? "").slice(0, 100) || undefined;
+  const merchantCategory = String(args.merchantCategory ?? "").trim().slice(0, 50) || undefined;
+
+  // ── Fail-closed policy check BEFORE Sentinel: reads the CURRENT policy
+  // from MoltMoney; never hardcoded. Policy unavailable ⇒ refuse.
+  const policy = await getBlockedCategoriesFromPolicy();
+  if (!policy.ok) {
+    audit("moltmoney", "finance.pay.send.policy_unavailable", { risk: "high", detail: "transfer refused" });
+    return fail(
+      "POLICY UNAVAILABLE: could not retrieve Elio's spending policy from MoltMoney (" +
+        policy.error +
+        ") Fail-closed: the transfer was NOT started and no approval was requested — do not assume spending is permitted.",
+      "send_payment"
+    );
+  }
+  if (merchantCategory && policy.blocked.length > 0 && policy.blocked.includes(merchantCategory)) {
+    audit("moltmoney", "finance.pay.send.blocked_category", { risk: "high", detail: merchantCategory });
+    return fail(
+      `REFUSED — BLOCKED CATEGORY: "${merchantCategory}" is a hard prohibition in MoltMoney's current policy. Blocked categories must NEVER reach an approval mechanism: no Sentinel approval request was created and no transfer was attempted. Ask the user how they want to proceed instead.`,
+      "send_payment"
+    );
+  }
+
+  // ── Sentinel gate: finance.pay → approval card → wait for the human ──
+  const verdict = guard({
+    action: "finance.pay",
+    detail:
+      `MoltMoney internal transfer: ${amount}` +
+      (toAccountId ? ` to ${toAccountId}` : " (no destination account specified)") +
+      (merchantCategory ? ` [category: ${merchantCategory}]` : "") +
+      (description ? ` — ${description}` : ""),
+    taskId: ctx.taskId,
+    conversationId: ctx.conversationId,
+  });
+  if (verdict.decision === "deny") return fail(`Blocked by Sentinel: ${verdict.reason}`, "send_payment");
+  if (verdict.decision === "ask") {
+    if (!verdict.approvalId) return fail("Blocked by Sentinel.", "send_payment");
+    const outcome = await waitForApproval(verdict.approvalId, { timeoutMs: 15 * 60_000 });
+    if (outcome !== "approved") {
+      audit("moltmoney", "finance.pay.send.not_approved", { risk: "high", detail: outcome });
+      return "Transfer was NOT started (approval denied or timed out). No money moved.";
+    }
+  }
+
+  // ── Approved: exactly one send call, no retry ──
+  const body: Record<string, unknown> = { amount };
+  if (toAccountId) body.toAccountId = toAccountId;
+  if (description) body.description = description;
+  if (merchantName) body.merchantName = merchantName;
+  if (merchantCategory) body.merchantCategory = merchantCategory;
+  const r = await mmPost("/payments/send", body);
+  if (!r.ok)
+    return fail(
+      `${r.error} (transfer NOT completed — verify with moltmoney_get_payment before attempting anything else)`,
+      "send_payment"
+    );
+
+  const tx = r.data.transaction ?? {};
+  audit("moltmoney", "finance.pay.send.result", {
+    target: tx.id,
+    detail: `${amount} status=${tx.status}`,
+    risk: "high",
+  });
+  return [
+    `Internal transfer via MoltMoney:`,
+    `transaction: ${tx.id ?? "?"}`,
+    `status: ${tx.status ?? "unknown"}`,
+    `amount: ${tx.amount ?? amount}`,
+    tx.approvalRequired
+      ? "OWNER APPROVAL REQUIRED: MoltMoney is holding this transfer until the account owner approves it — it is NOT complete yet. Tell the user; do not re-send or duplicate it."
+      : "",
+    tx.description ? `description: ${tx.description}` : "",
+    `Check status with moltmoney_get_payment using the transaction id.`,
   ]
     .filter(Boolean)
     .join("\n");

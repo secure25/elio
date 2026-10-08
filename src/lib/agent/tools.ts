@@ -507,6 +507,32 @@ if (moltmoneyMoneyEnabled()) {
         import("../connectors/moltmoney").then((m) =>
           m.moltmoneyCapturePaypalOrder(ctx, a.transaction_id)
         ),
+    },
+    {
+      def: {
+        name: "moltmoney_send_payment",
+        description:
+          "Send money from Elio's MoltMoney account to another MoltMoney account (INTERNAL transfer between MoltMoney accounts — NOT for buying things; use moltmoney_create_paypal_order for purchases). REQUIRES HUMAN APPROVAL via Sentinel — the transfer moves money immediately once approved. Pass to_account_id (MoltMoney account UUID or account number) when the user specifies a destination. Do NOT invent a merchant_category; if you classify the transfer as a blocked category it will be refused before approval. MoltMoney enforces spending rules server-side and may hold the transfer for owner approval. Never retry or duplicate a send.",
+        parameters: {
+          type: "object",
+          properties: {
+            amount: str("Amount as a decimal string, e.g. \"5.00\" (never a float)"),
+            to_account_id: str("Destination MoltMoney account id (UUID or account number); omit only if the user explicitly wants an unspecified destination"),
+            description: str("What the transfer is for (max 500 chars)"),
+            merchant_category: str("Optional category ONLY if the user explicitly states one (max 50 chars)"),
+          },
+          required: ["amount"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneySendPayment(ctx, {
+            amount: a.amount,
+            toAccountId: a.to_account_id,
+            description: a.description,
+            merchantCategory: a.merchant_category,
+          })
+        ),
     }
   );
 }

@@ -459,7 +459,7 @@ describe("moltmoney_capture_paypal_order (Sentinel-gated, idempotent)", () => {
 });
 
 describe("Phase 2A tool registration gating", () => {
-  it("registers all 6 MoltMoney tools when MOLTMONEY_ENABLED=true and creds present", async () => {
+  it("registers all 7 MoltMoney tools when MOLTMONEY_ENABLED=true and creds present", async () => {
     const { toolDefs } = await import("../src/lib/agent/tools");
     const names = toolDefs().map((d) => d.name);
     for (const n of [
@@ -469,6 +469,7 @@ describe("Phase 2A tool registration gating", () => {
       "moltmoney_get_payment",
       "moltmoney_create_paypal_order",
       "moltmoney_capture_paypal_order",
+      "moltmoney_send_payment",
     ]) {
       expect(names).toContain(n);
     }
