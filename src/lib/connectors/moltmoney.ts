@@ -19,6 +19,15 @@
 //   POST /payments/paypal/orders                   → { transaction, orderId, approvalUrl, state }
 //   POST /payments/paypal/orders/{orderId}/capture → { transaction } (idempotent)
 //   POST /payments/send                            → { transaction } (internal transfer)
+//   GET  /cards                                    → { cards[] } (masked, no CVV)
+//   POST /payments/payout                          → { transaction } (external bank payout)
+//   POST /payments/request                         → PaymentRequest (fund request to owner)
+//   GET  /payments/requests?status=N               → { data[] } (requester + recipient view)
+//   POST /payments/request/{id}/pay                → { request, transaction }
+//
+// Owner-vs-agent auth model (confirmed against MoltMoney routes 2026-10-11):
+// card issuing/freeze/cancel and fund-request APPROVAL are owner-token only —
+// deliberately NOT exposed to Elio (agent keys are rejected there).
 //
 // Configuration (all required, all server-side):
 //   MOLTMONEY_API_URL      e.g. https://<host> (no trailing slash needed)
@@ -688,6 +697,367 @@ export async function moltmoneySendPayment(
       : "",
     tx.description ? `description: ${tx.description}` : "",
     `Check status with moltmoney_get_payment using the transaction id.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// ── Phase 2B: cards, payouts, payment-requests (Sentinel-gated) ───────────
+
+/**
+ * GET /cards?accountId=… — list the agent account's virtual cards. Read-only
+ * (finance.read, no guard). MoltMoney masks numbers in list responses and
+ * never returns CVV; Elio echoes whatever masking it received and adds none.
+ */
+export async function moltmoneyListCards(): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "cards");
+  const r = await mmGet("/cards", { accountId: cfg.accountId });
+  if (!r.ok) return fail(r.error, "cards");
+  const cards: any[] = Array.isArray(r.data?.cards) ? r.data.cards : [];
+  audit("moltmoney", "finance.read.cards", { detail: `${cards.length}`, risk: "low" });
+  if (!cards.length) return `No virtual cards on MoltMoney account ${cfg.accountId}.`;
+  const lines = cards.map((c) =>
+    [
+      c.id,
+      `${c.cardNumber} exp ${c.expiryMonth}/${c.expiryYear}`,
+      `status: ${c.status}`,
+      c.spendLimit ? `spend limit: ${c.spendLimit}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ")
+  );
+  return [
+    `Virtual cards on MoltMoney account ${cfg.accountId}:`,
+    ...lines,
+    "(issuing, freezing and cancelling are owner-only operations in the MoltMoney dashboard — ask the owner; agent API keys are rejected there by design.)",
+  ].join("\n");
+}
+
+/**
+ * POST /payments/payout — send money to an external bank account.
+ * Sentinel: finance.pay (high/ask) BEFORE any HTTP call; a single approved
+ * call moves money immediately. No retries, ever (no idempotency key).
+ *
+ * Elio NEVER memorizes or stores bank details: routing/account numbers must
+ * come from the USER in this conversation. MoltMoney independently verifies
+ * the external account exists server-side and enforces spending rules
+ * (blocked categories, limits — payouts may be held for owner approval).
+ * Policy fetch failing ⇒ fail closed, no approval, no call.
+ */
+export async function moltmoneyCreatePayout(
+  ctx: ToolContext,
+  args: {
+    amount?: string;
+    routingNumber?: string;
+    accountNumber?: string;
+    accountHolder?: string;
+    description?: string;
+    merchantCategory?: string;
+  }
+): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "payout");
+
+  // ── Fail-closed validation BEFORE Sentinel and BEFORE any network call ──
+  const amount = String(args.amount ?? "").trim();
+  if (!DECIMAL_RE.test(amount) || Number(amount) <= 0) {
+    return fail(
+      `Invalid amount "${args.amount ?? ""}": use a positive decimal string like "5.00" (payout not started).`,
+      "payout"
+    );
+  }
+  const routingNumber = String(args.routingNumber ?? "").trim();
+  if (!/^\d{9}$/.test(routingNumber)) {
+    return fail(`Invalid routing number: must be exactly 9 digits (payout not started).`, "payout");
+  }
+  const accountNumber = String(args.accountNumber ?? "").trim();
+  if (!/^\d{8,17}$/.test(accountNumber)) {
+    return fail(`Invalid account number: must be 8-17 digits (payout not started).`, "payout");
+  }
+  const accountHolder = String(args.accountHolder ?? "").trim().slice(0, 100);
+  if (accountHolder.length < 2) {
+    return fail(`Invalid account holder: name is required (2-100 chars) (payout not started).`, "payout");
+  }
+  const description = String(args.description ?? "").slice(0, 500) || undefined;
+  const merchantCategory = String(args.merchantCategory ?? "").trim().slice(0, 50) || undefined;
+
+  // ── Fail-closed policy check BEFORE Sentinel (same rule as send-payment) ──
+  const policy = await getBlockedCategoriesFromPolicy();
+  if (!policy.ok) {
+    audit("moltmoney", "finance.pay.payout.policy_unavailable", { risk: "high", detail: "payout refused" });
+    return fail(
+      "POLICY UNAVAILABLE: could not retrieve Elio's spending policy from MoltMoney (" +
+        policy.error +
+        ") Fail-closed: the payout was NOT started and no approval was requested — do not assume spending is permitted.",
+      "payout"
+    );
+  }
+  if (merchantCategory && policy.blocked.length > 0 && policy.blocked.includes(merchantCategory)) {
+    audit("moltmoney", "finance.pay.payout.blocked_category", { risk: "high", detail: merchantCategory });
+    return fail(
+      `REFUSED — BLOCKED CATEGORY: "${merchantCategory}" is a hard prohibition in MoltMoney's current policy. Blocked categories must NEVER reach an approval mechanism: no Sentinel approval request was created and no payout was attempted. Ask the user how they want to proceed instead.`,
+      "payout"
+    );
+  }
+
+  // ── Sentinel gate: finance.pay → approval card → wait for the human ──
+  const verdict = guard({
+    action: "finance.pay",
+    detail:
+      `MoltMoney bank payout: ${amount} (USD) to ${accountHolder}, account ****${accountNumber.slice(-4)} (routing ${routingNumber.slice(0, 3)}…)` +
+      (merchantCategory ? ` [category: ${merchantCategory}]` : "") +
+      (description ? ` — ${description}` : ""),
+    taskId: ctx.taskId,
+    conversationId: ctx.conversationId,
+  });
+  if (verdict.decision === "deny") return fail(`Blocked by Sentinel: ${verdict.reason}`, "payout");
+  if (verdict.decision === "ask") {
+    if (!verdict.approvalId) return fail("Blocked by Sentinel.", "payout");
+    const outcome = await waitForApproval(verdict.approvalId, { timeoutMs: 15 * 60_000 });
+    if (outcome !== "approved") {
+      audit("moltmoney", "finance.pay.payout.not_approved", { risk: "high", detail: outcome });
+      return "Payout was NOT started (approval denied or timed out). No money moved.";
+    }
+  }
+
+  // ── Approved: exactly one payout call, no retry ──
+  const body: Record<string, unknown> = { amount, routingNumber, accountNumber, accountHolder };
+  if (description) body.description = description;
+  const r = await mmPost("/payments/payout", body);
+  if (!r.ok)
+    return fail(
+      `${r.error} (payout NOT completed — verify with moltmoney_get_payment before attempting anything else)`,
+      "payout"
+    );
+
+  const tx = r.data.transaction ?? {};
+  audit("moltmoney", "finance.pay.payout.result", {
+    target: tx.id,
+    detail: `${amount} status=${tx.status}`, // account/routing numbers deliberately never audited
+    risk: "high",
+  });
+  return [
+    `Bank payout via MoltMoney:`,
+    `transaction: ${tx.id ?? "?"}`,
+    `status: ${tx.status ?? "unknown"}`,
+    `amount: ${tx.amount ?? amount}`,
+    tx.recipientAccount ? `to: ${tx.recipientName ?? accountHolder} (${tx.recipientAccount})` : "",
+    tx.approvalRequired
+      ? "OWNER APPROVAL REQUIRED: MoltMoney is holding this payout until the account owner approves it — it is NOT complete yet. Tell the user; do not re-send or duplicate it."
+      : "",
+    `Check status with moltmoney_get_payment using the transaction id.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * POST /payments/request — create a payment/fund request. When toAccountId is
+ * omitted, MoltMoney treats it as a FUND REQUEST to the owner (owner must
+ * approve it in the dashboard — approval itself is owner-only and stays that
+ * way). Sentinel: finance.pay (high/ask) BEFORE the call — the request asks
+ * for money and, once paid, moves it. Amount validation also matches
+ * MoltMoney's server-side schema BEFORE approval is requested.
+ */
+export async function moltmoneyCreatePaymentRequest(
+  ctx: ToolContext,
+  args: {
+    amount?: string;
+    description?: string;
+    toAccountId?: string;
+    generateLink?: boolean;
+    expiresInHours?: number;
+    merchantCategory?: string;
+  }
+): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "payment_request");
+
+  const amount = String(args.amount ?? "").trim();
+ if (!DECIMAL_RE.test(amount) || Number(amount) <= 0) {
+    return fail(
+      `Invalid amount "${args.amount ?? ""}": use a positive decimal string like "5.00" (request not created).`,
+      "payment_request"
+    );
+  }
+  const description = String(args.description ?? "").trim().slice(0, 500);
+  if (!description) {
+    return fail("A description is required for a payment request (request not created).", "payment_request");
+  }
+  const toAccountId = String(args.toAccountId ?? "").trim().slice(0, 100) || undefined;
+  const generateLink = Boolean(args.generateLink);
+  const hours = Number(args.expiresInHours);
+  const ms = Number.isFinite(hours) && hours > 0 && hours <= 720 ? Math.floor(hours * 3_600_000) : 24 * 3_600_000;
+  const expiresAt = new Date(Date.now() + ms).toISOString();
+
+  // Hard-prohibition pre-check (fund requests to the owner carry no category;
+  // peer requests may — refuse a blocked classification before approval).
+  const policy = await getBlockedCategoriesFromPolicy();
+  if (!policy.ok) {
+    audit("moltmoney", "finance.pay.request.policy_unavailable", { risk: "high", detail: "request refused" });
+    return fail(
+      "POLICY UNAVAILABLE: could not retrieve Elio's spending policy from MoltMoney (" +
+        policy.error +
+        ") Fail-closed: the request was NOT created — do not assume spending is permitted.",
+      "payment_request"
+    );
+  }
+  const merchantCategory = String(args.merchantCategory ?? "").trim().slice(0, 50) || undefined;
+  if (merchantCategory && policy.blocked.length > 0 && policy.blocked.includes(merchantCategory)) {
+    audit("moltmoney", "finance.pay.request.blocked_category", { risk: "high", detail: merchantCategory });
+    return fail(
+      `REFUSED — BLOCKED CATEGORY: "${merchantCategory}" is a hard prohibition in MoltMoney's current policy. No approval was requested and no request was created.`,
+      "payment_request"
+    );
+  }
+
+  const verdict = guard({
+    action: "finance.pay",
+    detail:
+      `MoltMoney payment request: ${amount}${toAccountId ? ` to account ${toAccountId}` : " (fund request to owner)"}` +
+      (merchantCategory ? ` [category: ${merchantCategory}]` : "") +
+      ` — ${description}`,
+    taskId: ctx.taskId,
+    conversationId: ctx.conversationId,
+  });
+  if (verdict.decision === "deny") return fail(`Blocked by Sentinel: ${verdict.reason}`, "payment_request");
+  if (verdict.decision === "ask") {
+    if (!verdict.approvalId) return fail("Blocked by Sentinel.", "payment_request");
+    const outcome = await waitForApproval(verdict.approvalId, { timeoutMs: 15 * 60_000 });
+    if (outcome !== "approved") {
+      audit("moltmoney", "finance.pay.request.not_approved", { risk: "high", detail: outcome });
+      return "Payment request was NOT created (approval denied or timed out).";
+    }
+  }
+
+  const body: Record<string, unknown> = { amount, description, expiresAt };
+  if (toAccountId) body.toAccountId = toAccountId;
+  if (generateLink) body.generateLink = true;
+  const r = await mmPost("/payments/request", body);
+  if (!r.ok) return fail(`${r.error} (request NOT created)`, "payment_request");
+
+  const pr = r.data;
+  audit("moltmoney", "finance.pay.request.created", {
+    target: pr.id,
+    detail: `${amount} status=${pr.status}`,
+    risk: "high",
+  });
+  return [
+    `Payment request created on MoltMoney:`,
+    `request: ${pr.id}`,
+    `status: ${pr.status}`,
+    `amount: ${pr.amount ?? amount}`,
+    toAccountId ? `to account: ${pr.toAccountId ?? toAccountId}` : "fund request to owner — the OWNER approves it in the MoltMoney dashboard (owner-only; Elio cannot approve its own fund request).",
+    pr.paymentLink ? `payment link: ${pr.paymentLink}` : "",
+    pr.expiresAt ? `expires: ${pr.expiresAt}` : "",
+    "Track it with moltmoney_list_payment_requests.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * GET /payments/requests — list requests from this agent's account (and peer
+ * requests addressed to it). Read-only (finance.read). Owner-view filtering,
+ * fund-request approval and decline are owner-side — not exposed here.
+ */
+export async function moltmoneyListPaymentRequests(status?: string): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "payment_requests");
+  const st = String(status ?? "").trim().toUpperCase();
+  const r = await mmGet("/payments/requests", st ? { status: st } : undefined);
+  if (!r.ok) return fail(r.error, "payment_requests");
+  const rows: any[] = Array.isArray(r.data?.data) ? r.data.data : [];
+  audit("moltmoney", "finance.read.payment_requests", { detail: `${rows.length}`, risk: "low" });
+  if (!rows.length) return "No MoltMoney payment requests yet.";
+  const lines = rows.slice(0, 50).map((p) =>
+    [
+      p.id,
+      `${p.amount} ${p.currency ?? ""}`.trim(),
+      `status: ${p.status}`,
+      p.toAccountId === null ? "fund request → owner" : `to: ${p.toAccountId}`,
+      p.description,
+      p.expiresAt ? `expires ${p.expiresAt}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ")
+  );
+  return ["MoltMoney payment requests:", ...lines].join("\n");
+}
+
+/**
+ * POST /payments/request/{id}/pay — pay a peer request addressed TO this
+ * agent (payerAccountId must equal the request's toAccountId; MoltMoney
+ * rejects Elio paying anyone else's request). Sentinel: finance.pay BEFORE
+ * the call — paying a request moves money immediately. No retries.
+ */
+export async function moltmoneyPayPaymentRequest(ctx: ToolContext, requestId: string): Promise<string> {
+  const cfg = config();
+  if (!cfg) return fail(notConfiguredMsg(), "pay_request");
+
+  const id = String(requestId || "").trim();
+  if (!id) return fail("A request_id is required (payment not attempted).", "pay_request");
+
+  // ── Read the request first: fail closed BEFORE approval if it is not a
+  // pending request addressed to Elio's account. Mirror of MoltMoney's own
+  // "only the recipient can pay" check, so invalid targets never even create
+  // an approval card.
+  const list = await mmGet("/payments/requests");
+  if (!list.ok) return fail(`Could not verify the request before approving anything (${list.error})`, "pay_request");
+  const rows: any[] = Array.isArray(list.data?.data) ? list.data.data : [];
+  const target = rows.find((p) => p.id === id);
+  if (!target) {
+    return fail(
+      `Request ${id} is not visible to this account — refusing (only the recipient can pay a request; nothing was approved or paid).`,
+      "pay_request"
+    );
+  }
+  if (target.status !== "PENDING") {
+    return fail(`Request ${id} is ${String(target.status).toLowerCase()} — only PENDING requests can be paid (nothing was paid).`, "pay_request");
+  }
+  if (target.toAccountId == null || target.toAccountId !== cfg.accountId) {
+    return fail(
+      `Request ${id} is not addressed to this account (toAccountId=${target.toAccountId ?? "null"}) — refusing. Fund requests go to the OWNER, who approves them in the MoltMoney dashboard; nothing was approved or paid.`,
+      "pay_request"
+    );
+  }
+
+  // ── Sentinel gate: finance.pay → approval card → wait for the human ──
+  const verdict = guard({
+    action: "finance.pay",
+    detail: `Pay MoltMoney payment request ${id}: ${target.amount} ${target.currency ?? ""}`.trim() +
+      (target.description ? ` — ${target.description}` : ""),
+    taskId: ctx.taskId,
+    conversationId: ctx.conversationId,
+  });
+  if (verdict.decision === "deny") return fail(`Blocked by Sentinel: ${verdict.reason}`, "pay_request");
+  if (verdict.decision === "ask") {
+    if (!verdict.approvalId) return fail("Blocked by Sentinel.", "pay_request");
+    const outcome = await waitForApproval(verdict.approvalId, { timeoutMs: 15 * 60_000 });
+    if (outcome !== "approved") {
+      audit("moltmoney", "finance.pay.pay_request.not_approved", { risk: "high", target: id, detail: outcome });
+      return `Payment request ${id} was NOT paid (approval denied or timed out). Nothing moved.`;
+    }
+  }
+
+  // ── Approved: exactly one pay call, no retry ──
+  const r = await mmPost(`/payments/request/${encodeURIComponent(id)}/pay`, { payerAccountId: cfg.accountId });
+  if (!r.ok)
+    return fail(`${r.error} (payment NOT completed — verify the request's status before retrying anything)`, "pay_request");
+
+  const req = r.data.request ?? {};
+  const tx = r.data.transaction ?? {};
+  audit("moltmoney", "finance.pay.pay_request.result", {
+    target: tx.id ?? id,
+    detail: `request=${id} status=${tx.status}`,
+    risk: "high",
+  });
+  return [
+    `Paid payment request ${req.id ?? id}:`,
+    `request status: ${req.status ?? "unknown"}`,
+    `transaction: ${tx.id ?? "?"} (amount ${tx.amount ?? "?"}, status ${tx.status ?? "unknown"})`,
+    `Check balances with moltmoney_get_balance.`,
   ]
     .filter(Boolean)
     .join("\n");

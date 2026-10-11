@@ -423,6 +423,30 @@ if (moltmoneyReadonlyEnabled()) {
         parameters: { type: "object", properties: {} },
       },
       run: () => import("../connectors/moltmoney").then((m) => m.moltmoneyGetSpendingRules()),
+    },
+    {
+      def: {
+        name: "moltmoney_list_cards",
+        description:
+          "List Elio's virtual cards on MoltMoney (masked numbers, no CVV, status, spend limit). Read-only. Card issuing, freezing and cancelling are owner-only operations in the MoltMoney dashboard — Elio cannot do them.",
+        parameters: { type: "object", properties: {} },
+      },
+      run: () => import("../connectors/moltmoney").then((m) => m.moltmoneyListCards()),
+    },
+    {
+      def: {
+        name: "moltmoney_list_payment_requests",
+        description:
+          "List MoltMoney payment requests: this agent's outgoing payments/fund requests to the owner and any peer requests addressed to this account (id, amount, status, expiry). Read-only.",
+        parameters: {
+          type: "object",
+          properties: {
+            status: str("Optional filter: PENDING, PAID, DECLINED or EXPIRED"),
+          },
+        },
+      },
+      run: (_ctx, a) =>
+        import("../connectors/moltmoney").then((m) => m.moltmoneyListPaymentRequests(a?.status)),
     }
   );
 }
@@ -532,6 +556,84 @@ if (moltmoneyMoneyEnabled()) {
             description: a.description,
             merchantCategory: a.merchant_category,
           })
+        ),
+    },
+    {
+      def: {
+        name: "moltmoney_create_payout",
+        description:
+          "Send money OUT of Elio's MoltMoney account to an external bank account (a real-world payout). Check moltmoney_get_spending_rules FIRST. HARD PROHIBITION: refuse a blocked-category classification before any approval request. Bank details (9-digit routing number, 8-17 digit account number, account holder name) must come from THE USER in this conversation — never invent, guess or reuse stored details. REQUIRES HUMAN APPROVAL via Sentinel, AND MoltMoney may additionally hold the payout for owner approval. Moves money immediately once approved. Never retry or duplicate a payout.",
+        parameters: {
+          type: "object",
+          properties: {
+            amount: str("Amount as a decimal string, e.g. \"5.00\" (never a float)"),
+            routing_number: str("9-digit US routing number, provided by the user"),
+            account_number: str("8-17 digit bank account number, provided by the user"),
+            account_holder: str("Account holder name as the bank knows it (2-100 chars), provided by the user"),
+            description: str("What the payout is for (max 500 chars)"),
+            merchant_category: str("Optional category ONLY if the user explicitly states one (max 50 chars)"),
+          },
+          required: ["amount", "routing_number", "account_number", "account_holder"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneyCreatePayout(ctx, {
+            amount: a.amount,
+            routingNumber: a.routing_number,
+            accountNumber: a.account_number,
+            accountHolder: a.account_holder,
+            description: a.description,
+            merchantCategory: a.merchant_category,
+          })
+        ),
+    },
+    {
+      def: {
+        name: "moltmoney_create_payment_request",
+        description:
+          "Create a MoltMoney payment request. WITHOUT to_account_id this is a FUND REQUEST to the owner: money arrives only after the owner approves it in the MoltMoney dashboard (owner-only — Elio can never approve its own fund request). With to_account_id it asks a specific MoltMoney account for money; the recipient pays it via moltmoney_pay_payment_request. Check moltmoney_get_spending_rules FIRST; refuse blocked-category classifications before requesting approval. Receiving money only (creating a request never moves money out), but still Sentinel-gated since it initiates money flow.",
+        parameters: {
+          type: "object",
+          properties: {
+            amount: str("Amount as a decimal string, e.g. \"5.00\" (never a float)"),
+            description: str("What the request is for (required, max 500 chars)"),
+            to_account_id: str("Omit for a fund request to the owner; or a MoltMoney account id (UUID/account number) to bill a peer"),
+            generate_link: { type: "boolean", description: "Also generate a shareable payment link" },
+            expires_in_hours: { type: "number", description: "Expiry in hours (default 24, max 720)" },
+            merchant_category: str("Optional category ONLY if the user explicitly states one (max 50 chars)"),
+          },
+          required: ["amount", "description"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneyCreatePaymentRequest(ctx, {
+            amount: a.amount,
+            description: a.description,
+            toAccountId: a.to_account_id,
+            generateLink: a.generate_link,
+            expiresInHours: a.expires_in_hours,
+            merchantCategory: a.merchant_category,
+          })
+        ),
+    },
+    {
+      def: {
+        name: "moltmoney_pay_payment_request",
+        description:
+          "Pay a MoltMoney payment request that is addressed TO this account (only the recipient can pay; Elio refuses other targets before any approval). REQUIRES HUMAN APPROVAL via Sentinel — paying moves money immediately. Do not use for peer-to-peer transfers without an existing request (use moltmoney_send_payment) or for purchases (use moltmoney_create_paypal_order). Never retry or duplicate.",
+        parameters: {
+          type: "object",
+          properties: {
+            request_id: str("MoltMoney payment request id, from moltmoney_list_payment_requests"),
+          },
+          required: ["request_id"],
+        },
+      },
+      run: (ctx, a) =>
+        import("../connectors/moltmoney").then((m) =>
+          m.moltmoneyPayPaymentRequest(ctx, a.request_id)
         ),
     }
   );
