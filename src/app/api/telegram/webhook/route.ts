@@ -11,6 +11,8 @@ import { createTask } from "@/lib/agent/runner";
 import { extractMemories } from "@/lib/memory";
 import { tryHandleDigestReply } from "@/lib/digest-commands";
 import { runDigest, unreadDigestCount } from "@/lib/digest";
+import { handleApprovalCallback } from "@/lib/approvals-notify";
+import { guard } from "@/lib/sentinel";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -64,7 +66,28 @@ export async function POST(req: NextRequest) {
   }
 
   const update = (await req.json().catch(() => null)) as any;
-  if (!update || !update.message) {
+  if (!update) {
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── Inline-keyboard callbacks (Approve / Decline) ────────────────────────
+  // Fast-path before the message handler so pressing a button never logs a
+  // fake empty "message". Only the owner's chat may act; anything else is
+  // consumed (answered) by handleApprovalCallback itself.
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    if (typeof update.update_id === "number" && !trackUpdate(update.update_id)) {
+      return NextResponse.json({ ok: true, deduplicated: true });
+    }
+    try {
+      await handleApprovalCallback(cb?.message?.chat?.id, cb?.id, cb?.data);
+    } catch (e: any) {
+      audit("telegram", "approval.callback_error", { detail: String(e?.message || e).slice(0, 200), risk: "low" });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (!update.message) {
     return NextResponse.json({ ok: true });
   }
 
@@ -157,6 +180,26 @@ export async function POST(req: NextRequest) {
         await sendTelegramDirect(chatId, `Failed to generate digest: ${e.message}`);
       }
     })();
+    return NextResponse.json({ ok: true });
+  }
+
+  if (text === "/approval-test") {
+    // Owner-only end-to-end self-test: creates a harmless synthetic pending
+    // approval (action 'test.telegram_e2e'), which the Sentinel automatically
+    // pushes to this chat with Approve/Decline buttons. Nothing real is at
+    // stake — it exists so the owner can verify the approval→Telegram→button
+    // pipeline works, and this command is reachable only from the locked chat.
+    const verdict = guard({
+      action: "test.telegram_e2e",
+      detail: "Synthetic E2E test approval — safe to approve or decline. Created via /approval-test from Telegram.",
+      conversationId: getSecret("telegram_active_conversation_id"),
+    });
+    void sendTelegramDirect(
+      chatId,
+      verdict.decision === "ask" && verdict.approvalId
+        ? "🧪 Test approval created — the card with Approve/Decline buttons should arrive next. Tap one to complete the end-to-end test."
+        : "Unexpected verdict: " + JSON.stringify(verdict)
+    );
     return NextResponse.json({ ok: true });
   }
 

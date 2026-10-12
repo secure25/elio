@@ -16,6 +16,7 @@ function publicConfig() {
     ),
     elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
     telegramResultsEnabled: getSetting("telegram_results_enabled") !== "false",
+    telegramApprovalsEnabled: getSetting("approval_telegram_enabled") !== "false",
     voiceProvider: ttsProvider(),
     voice: voiceStatus().tts,
     googleOAuthConfigured: googleOAuthConfigured(),

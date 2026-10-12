@@ -4,6 +4,7 @@ out
 dist
 data
 data-test
+.elio-dev.pid
 .env
 .env.*
 !.env.example
@@ -19,3 +20,4 @@ voice-test.wav
 
 # Large local design artifacts (18 MB wireframes)
 /open-muse-design/
+public/

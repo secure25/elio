@@ -199,6 +199,26 @@ export async function sendTelegramDirect(
   return { ok: true };
 }
 
+/** Answer an inline-keyboard callback query (removes the spinner on the button). */
+export async function answerCallbackQuery(
+  callbackId: string,
+  text?: string,
+  showAlert = false
+): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !callbackId) return;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId, text, show_alert: showAlert }),
+    });
+    await res.json().catch(() => ({}));
+  } catch {
+    // Non-critical
+  }
+}
+
 export async function sendTelegramChatAction(
   chatId: string | number,
   action: "typing" | "upload_document" | "find_location" = "typing"

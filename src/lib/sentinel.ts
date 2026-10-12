@@ -95,6 +95,12 @@ export function guard(req: SentinelRequest): SentinelVerdict {
     "INSERT INTO approvals (id, task_id, conversation_id, action, detail, risk, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)"
   ).run(id, req.taskId ?? null, req.conversationId ?? null, req.action, req.detail, risk, now());
   audit("sentinel", "approval.requested", { target: req.action, detail: req.detail.slice(0, 500), risk });
+  // Push the approval to the owner's connected Telegram chat (async, never
+  // blocks or fails the action itself). Skipped safely when Telegram is not
+  // connected.
+  void import("./approvals-notify")
+    .then((m) => m.notifyApprovalCreated(id, req.action, req.detail, risk))
+    .catch(() => {});
   return { decision: "ask", risk, reason, approvalId: id };
 }
 

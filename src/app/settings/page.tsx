@@ -44,6 +44,7 @@ interface Config {
   voiceProvider?: "auto" | "local";
   voice?: VoiceInfo;
   telegramResultsEnabled?: boolean;
+  telegramApprovalsEnabled?: boolean;
   googleOAuthConfigured: boolean;
   vaultConfigured: boolean;
 }
@@ -55,6 +56,7 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [telegramResults, setTelegramResults] = useState(true);
+  const [telegramApprovals, setTelegramApprovals] = useState(true);
   const [tgBusy, setTgBusy] = useState(false);
 
   // Profile state
@@ -139,6 +141,7 @@ export default function SettingsPage() {
           const cfg = await resSettings.json();
           setConfig(cfg);
           setTelegramResults(cfg.telegramResultsEnabled !== false);
+          setTelegramApprovals(cfg.telegramApprovalsEnabled !== false);
         }
         if (resMe && resMe.ok) {
           const meData = await resMe.json();
@@ -171,6 +174,34 @@ export default function SettingsPage() {
           on
             ? "Task results will also arrive on your Telegram"
             : "Task results are app-only — Telegram delivery off"
+        );
+      } else {
+        showToast("Could not save the Telegram setting — try again");
+      }
+    } catch {
+      showToast("Could not save the Telegram setting — try again");
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  // Telegram approval pushes (Settings → Behavior). Persisted server-side;
+  // default ON: every pending approval also lands on Telegram with
+  // Approve/Decline buttons so the owner can act from their phone.
+  const switchTelegramApprovals = async (on: boolean) => {
+    setTgBusy(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "approval_telegram_enabled", value: on ? "true" : "false" }),
+      });
+      if (res.ok) {
+        setTelegramApprovals(on);
+        showToast(
+          on
+            ? "Approvals will also arrive on your Telegram"
+            : "Approvals are app-only — Telegram pushes off"
         );
       } else {
         showToast("Could not save the Telegram setting — try again");
@@ -702,6 +733,28 @@ export default function SettingsPage() {
                       <div
                         className={`w-4.5 h-4.5 bg-white rounded-full transition-transform shadow-xs ${
                           telegramResults ? "translate-x-4.5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between pb-4 border-b border-[var(--border)]">
+                    <div>
+                      <div className="text-xs font-semibold text-[var(--text)]">Telegram Approval Pushes</div>
+                      <div className="text-[11px] text-[var(--muted)] mt-0.5">
+                        Send pending approvals to your connected Telegram chat with Approve/Decline buttons — resolve them from your phone without opening the app (requires the Telegram connector)
+                      </div>
+                    </div>
+                    <button
+                      disabled={tgBusy}
+                      onClick={() => switchTelegramApprovals(!telegramApprovals)}
+                      className={`w-10 h-5.5 rounded-full p-0.5 transition-colors disabled:opacity-60 ${
+                        telegramApprovals ? "bg-[var(--accent)]" : "bg-[#DDD7CD]"
+                      }`}
+                    >
+                      <div
+                        className={`w-4.5 h-4.5 bg-white rounded-full transition-transform shadow-xs ${
+                          telegramApprovals ? "translate-x-4.5" : "translate-x-0"
                         }`}
                       />
                     </button>
