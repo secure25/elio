@@ -38,6 +38,15 @@ function buildAdapter(provider: string): LLMAdapter {
       baseUrl: "https://openrouter.ai/api/v1",
     });
   }
+  if (provider === "codecraft") {
+    if (!process.env.CODECRAFT_API_KEY) throw new Error("CODECRAFT_API_KEY missing in .env");
+    return openAICompatibleAdapter({
+      provider: "codecraft",
+      apiKey: process.env.CODECRAFT_API_KEY,
+      model: process.env.CODECRAFT_MODEL || "claude-opus-4.8",
+      baseUrl: "https://codecraftapi.com/v1",
+    });
+  }
   if (provider === "cleanapis") {
     if (!process.env.CLEANAPIS_API_KEY) throw new Error("CLEANAPIS_API_KEY missing in .env");
     return openAICompatibleAdapter({
@@ -66,10 +75,11 @@ export function configuredProviders(): string[] {
   const order: string[] = [];
   const explicit = (process.env.LLM_PROVIDER || "").toLowerCase();
   if (explicit) order.push(explicit);
-  for (const p of ["cleanapis", "gemini", "groq", "openrouter", "qwen"]) {
+  for (const p of ["codecraft", "cleanapis", "gemini", "groq", "openrouter", "qwen"]) {
     if (!order.includes(p)) order.push(p);
   }
   return order.filter((p) => {
+    if (p === "codecraft") return Boolean(process.env.CODECRAFT_API_KEY);
     if (p === "cleanapis") return Boolean(process.env.CLEANAPIS_API_KEY);
     if (p === "gemini") return Boolean(process.env.GEMINI_API_KEY);
     if (p === "groq") return Boolean(process.env.GROQ_API_KEY);

@@ -8,9 +8,9 @@ export const runtime = "nodejs";
 
 function publicConfig() {
   return {
-    provider: process.env.LLM_PROVIDER || (process.env.CLEANAPIS_API_KEY ? "cleanapis" : process.env.GEMINI_API_KEY ? "gemini" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENROUTER_API_KEY ? "openrouter" : process.env.QWEN_API_TOKEN ? "qwen" : null),
+    provider: process.env.LLM_PROVIDER || (process.env.CODECRAFT_API_KEY ? "codecraft" : process.env.CLEANAPIS_API_KEY ? "cleanapis" : process.env.GEMINI_API_KEY ? "gemini" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENROUTER_API_KEY ? "openrouter" : process.env.QWEN_API_TOKEN ? "qwen" : null),
     model:
-      process.env.CLEANAPIS_MODEL || process.env.GEMINI_MODEL || process.env.GROQ_MODEL || process.env.OPENROUTER_MODEL || process.env.QWEN_MODEL || null,
+      process.env.CODECRAFT_MODEL || process.env.CLEANAPIS_MODEL || process.env.GEMINI_MODEL || process.env.GROQ_MODEL || process.env.OPENROUTER_MODEL || process.env.QWEN_MODEL || null,
     llmConfigured: Boolean(
       process.env.CLEANAPIS_API_KEY || process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY || process.env.QWEN_API_TOKEN
     ),
