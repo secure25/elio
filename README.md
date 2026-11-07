@@ -4,6 +4,10 @@ A self-hosted, from-scratch clone of **Meta's Muse** (renamed **Elio**) (launche
 that *does* tasks — browses the web, sends email, manages your calendar, researches and
 negotiates — with Muse's signature safety architecture rebuilt end-to-end:
 
+> **Live demo:** <https://elio-production-9b75.up.railway.app/landing> — sign up with any
+> email and Elio is ready to chat. Prefer to run it yourself? The quickstart below takes
+> about five minutes and needs only a free LLM key.
+
 | Muse concept | This clone |
 |---|---|
 | Muse Secure VM (per-user isolated agent computer) | Everything runs locally in this app; state in SQLite at `data/` |
@@ -256,3 +260,7 @@ npm run typecheck      # tsc --noEmit
 npm run setup:browser  # optional Chromium for the browser agent
 npm run setup:voice    # optional Piper neural TTS (male en_US-ryan-medium, ~63 MB)
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
