@@ -36,9 +36,11 @@ feature works without it.
 
 - **Next.js 15 + TypeScript + Tailwind** (App Router, Node runtime)
 - **SQLite via `node:sqlite`** — no native compilation needed
-- **LLM: free-tier cloud models via a pluggable adapter**
+- **LLM: pluggable adapter with automatic failover**
   - default: **Google Gemini** free tier (`gemini-flash-latest` alias, free API key from AI Studio)
-  - one-line swap: **Groq** or **OpenRouter** free models (OpenAI-compatible adapter)
+  - one-line swap: **Groq**, **OpenRouter**, **AgentRouter**, **APInex** or **Qwen** — every
+    OpenAI-compatible gateway is supported, and a provider that hits a quota wall or
+    runs out of credit cascades to the next configured one instead of failing the task
 - **Real integrations**: Gmail + Google Calendar (hand-rolled OAuth 2.0, REST), live web
   (fetch + DuckDuckGo search), real browser (Playwright)
 

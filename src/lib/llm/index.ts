@@ -61,6 +61,33 @@ function buildAdapter(provider: string): LLMAdapter {
       baseUrl: "https://cleanapis.com/v1",
     });
   }
+  // Generic OpenAI-compatible gateways: the hostname is env-driven, so the same
+  // code works for AgentRouter (whose base URL depends on the account/region)
+  // and for APInex (https://api.apinex.bond/v1 by default).
+  if (provider === "agentrouter") {
+    const baseUrl = (process.env.AGENTROUTER_BASE_URL || "").trim().replace(/\/+$/, "");
+    if (!baseUrl) {
+      throw new Error(
+        "AGENTROUTER_BASE_URL missing in .env (the OpenAI-compatible base URL, e.g. https://<host>/v1)"
+      );
+    }
+    if (!process.env.AGENTROUTER_API_KEY) throw new Error("AGENTROUTER_API_KEY missing in .env");
+    return openAICompatibleAdapter({
+      provider: "agentrouter",
+      apiKey: process.env.AGENTROUTER_API_KEY,
+      model: process.env.AGENTROUTER_MODEL || "claude-sonnet-4-5",
+      baseUrl,
+    });
+  }
+  if (provider === "apinex") {
+    if (!process.env.APINEX_API_KEY) throw new Error("APINEX_API_KEY missing in .env");
+    return openAICompatibleAdapter({
+      provider: "apinex",
+      apiKey: process.env.APINEX_API_KEY,
+      model: process.env.APINEX_MODEL || "claude-sonnet-4-5",
+      baseUrl: (process.env.APINEX_BASE_URL || "https://api.apinex.bond/v1").trim().replace(/\/+$/, ""),
+    });
+  }
   if (provider === "qwen") {
     if (!process.env.QWEN_API_TOKEN || !process.env.QWEN_BASE_URL) {
       throw new Error("QWEN_API_TOKEN and QWEN_BASE_URL missing in .env");
@@ -80,12 +107,24 @@ export function configuredProviders(): string[] {
   const order: string[] = [];
   const explicit = (process.env.LLM_PROVIDER || "").toLowerCase();
   if (explicit) order.push(explicit);
-  for (const p of ["codecraft", "cleanapis", "gemini", "groq", "openrouter", "qwen"]) {
+  for (const p of [
+    "codecraft",
+    "cleanapis",
+    "agentrouter",
+    "apinex",
+    "gemini",
+    "groq",
+    "openrouter",
+    "qwen",
+  ]) {
     if (!order.includes(p)) order.push(p);
   }
   return order.filter((p) => {
     if (p === "codecraft") return Boolean(process.env.CODECRAFT_API_KEY);
     if (p === "cleanapis") return Boolean(process.env.CLEANAPIS_API_KEY);
+    if (p === "agentrouter")
+      return Boolean(process.env.AGENTROUTER_API_KEY && process.env.AGENTROUTER_BASE_URL);
+    if (p === "apinex") return Boolean(process.env.APINEX_API_KEY);
     if (p === "gemini") return Boolean(process.env.GEMINI_API_KEY);
     if (p === "groq") return Boolean(process.env.GROQ_API_KEY);
     if (p === "openrouter") return Boolean(process.env.OPENROUTER_API_KEY);
