@@ -6,8 +6,13 @@ import { openAICompatibleAdapter } from "./openai-compatible";
 // LLM_PROVIDER (or first configured key), and when a call fails with a
 // rate-limit/quota/capacity error, the next configured provider is tried —
 // so a free-tier quota wall no longer kills a running task mid-flight.
+// A provider that cannot serve the call right now should never take the whole
+// agent down: quota walls, rate limits, transient 5xx AND a depleted provider
+// account ("insufficient plan tokens / account balance", "payment required")
+// all cascade to the next configured provider. Genuine request errors (bad
+// input, invalid model) do not match and surface immediately.
 const RATE_LIMIT_RE =
-  /quota|rate.?limit|exceeded|429|502|503|504|bad gateway|gateway|unavailable|high demand|overloaded|capacity|too many requests|non-json response/i;
+  /quota|rate.?limit|exceeded|429|402|502|503|504|bad gateway|gateway|unavailable|high demand|overloaded|capacity|too many requests|non-json response|insufficient[ _-]?(plan[ _-]?)?(tokens?|credits?|balance|funds)|account balance|no (?:remaining )?balance|billing|payment required|out of credit|top up/i;
 
 function buildAdapter(provider: string): LLMAdapter {
   if (provider === "gemini") {

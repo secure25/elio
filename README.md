@@ -4,9 +4,20 @@ A self-hosted, from-scratch clone of **Meta's Muse** (renamed **Elio**) (launche
 that *does* tasks — browses the web, sends email, manages your calendar, researches and
 negotiates — with Muse's signature safety architecture rebuilt end-to-end:
 
-> **Live demo:** <https://elio-production-9b75.up.railway.app/landing> — sign up with any
-> email and Elio is ready to chat. Prefer to run it yourself? The quickstart below takes
-> about five minutes and needs only a free LLM key.
+> **Live demo:** <https://elio-production-9b75.up.railway.app/landing> — sign in with
+> `demo@moltmoney.dev` / `DemoJudge2026!` (or create your own account). Prefer to run it
+> yourself? The quickstart below takes about five minutes and needs only a free LLM key.
+
+Elio is the **AI half** of the [MoltMoney](https://github.com/secure25/moltmoney)
+submission: MoltMoney is where PayPal lives — every purchase Elio decides on becomes a
+PayPal sandbox order created, approved and captured by MoltMoney, after Elio's Sentinel
+gate asks you first. Start with the
+[MoltMoney demo dashboard](https://moltmoneydashboard-production.up.railway.app): click
+**Explore the demo account** (`demo@moltmoney.dev` / `DemoJudge2026!`).
+
+**Telegram is optional.** Approvals appear in Elio's chat and on its `/approvals` page;
+connecting a Telegram bot only adds a second place to approve from, and every other
+feature works without it.
 
 | Muse concept | This clone |
 |---|---|
