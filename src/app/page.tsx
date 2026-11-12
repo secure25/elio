@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   FileText,
   Plus,
+  History,
 } from "lucide-react";
 
 interface Approval {
@@ -49,6 +50,12 @@ interface Digest {
   body: string;
   read: number;
 }
+interface Conversation {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -66,6 +73,8 @@ export default function ChatPage() {
   // auto-show on desktop once the client has mounted.
   const [showBrowser, setShowBrowser] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -245,6 +254,45 @@ export default function ChatPage() {
     setConversationId(null);
     setTaskId(null);
     setHeaderMenuOpen(false);
+    setHistoryOpen(false);
+  };
+
+  // ── Chat history: recent conversations and resuming one ──
+  const loadConversations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/conversations");
+      if (!res.ok) return;
+      const data = await res.json();
+      setConversations(data.conversations || []);
+    } catch {
+      // Non-critical: history stays as it was
+    }
+  }, []);
+
+  const openConversation = async (id: string) => {
+    try {
+      const res = await fetch(`/api/conversations?id=${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      setMessages((data.messages || []) as Message[]);
+      setConversationId(id);
+      setSteps([]);
+      setApprovals([]);
+      setTaskId(null);
+      setBusy(false);
+      setHistoryOpen(false);
+      showToast("Conversation resumed");
+    } catch {
+      showToast("Could not load that conversation");
+    }
+  };
+
+  const formatWhen = (ts: number) => {
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return "just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return new Date(ts).toLocaleDateString();
   };
 
   const exportTranscript = () => {
@@ -298,6 +346,43 @@ export default function ChatPage() {
               <Plus size={14} />
               <span>New chat</span>
             </button>
+
+            {/* Recent conversations — resume any earlier chat */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  const next = !historyOpen;
+                  setHistoryOpen(next);
+                  if (next) loadConversations();
+                }}
+                title="Recent conversations"
+                className="chip flex items-center gap-1.5 px-3 py-1.5 text-xs hover:brightness-95 cursor-pointer"
+              >
+                <History size={14} />
+                <span>History</span>
+              </button>
+
+              {historyOpen && (
+                <div className="absolute right-0 mt-1.5 w-72 max-h-80 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-xl z-30 py-1 text-xs">
+                  {conversations.length === 0 ? (
+                    <p className="px-3.5 py-2 text-[var(--muted)]">No conversations yet.</p>
+                  ) : (
+                    conversations.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => openConversation(c.id)}
+                        className={`w-full text-left px-3.5 py-2 hover:bg-[#F2EFE9] flex flex-col gap-0.5 ${
+                          c.id === conversationId ? "bg-[#F2EFE9]" : ""
+                        }`}
+                      >
+                        <span className="truncate text-[var(--text)]">{c.title || "New chat"}</span>
+                        <span className="text-[10px] text-[var(--muted)]">{formatWhen(c.updated_at)}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             {busy && (
               <span className="chip chip-moss flex items-center gap-1.5 px-3 py-1 text-xs">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />

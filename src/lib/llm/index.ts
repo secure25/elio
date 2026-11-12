@@ -1,6 +1,7 @@
 import type { LLMAdapter } from "./types";
 import { geminiAdapter } from "./gemini";
 import { openAICompatibleAdapter } from "./openai-compatible";
+import { openAIResponsesAdapter } from "./responses";
 
 // Provider selection with automatic failover: the primary provider is chosen by
 // LLM_PROVIDER (or first configured key), and when a call fails with a
@@ -61,9 +62,9 @@ function buildAdapter(provider: string): LLMAdapter {
       baseUrl: "https://cleanapis.com/v1",
     });
   }
-  // Generic OpenAI-compatible gateways: the hostname is env-driven, so the same
-  // code works for AgentRouter (whose base URL depends on the account/region)
-  // and for APInex (https://api.apinex.bond/v1 by default).
+  // Generic gateways: the hostname is env-driven, so the same code works for
+  // AgentRouter (base URL depends on the account) and for APInex
+  // (https://api.apinex.bond/v1 by default).
   if (provider === "agentrouter") {
     const baseUrl = (process.env.AGENTROUTER_BASE_URL || "").trim().replace(/\/+$/, "");
     if (!baseUrl) {
@@ -72,11 +73,21 @@ function buildAdapter(provider: string): LLMAdapter {
       );
     }
     if (!process.env.AGENTROUTER_API_KEY) throw new Error("AGENTROUTER_API_KEY missing in .env");
-    return openAICompatibleAdapter({
+    // AgentRouter serves its models only through the Responses API and rejects
+    // unrecognised HTTP clients with 401 "unauthorized client detected" *before*
+    // it even looks at the key — its gateway expects a Claude-CLI-style client.
+    return openAIResponsesAdapter({
       provider: "agentrouter",
       apiKey: process.env.AGENTROUTER_API_KEY,
-      model: process.env.AGENTROUTER_MODEL || "claude-sonnet-4-5",
+      model: process.env.AGENTROUTER_MODEL || "gpt-5.6-sol",
       baseUrl,
+      headers: {
+        "User-Agent": process.env.AGENTROUTER_USER_AGENT || "claude-cli/2.0.14 (external, cli)",
+        "x-app": "cli",
+      },
+      // AgentRouter answers a tool result with an empty message unless another
+      // turn follows, which would end every tool-using task with "(no content)".
+      continueAfterToolOutput: true,
     });
   }
   if (provider === "apinex") {
@@ -137,7 +148,7 @@ export function getAdapter(): LLMAdapter {
   const providers = configuredProviders();
   if (!providers.length) {
     throw new Error(
-      "No LLM configured. Set LLM_PROVIDER (gemini|groq|openrouter|qwen) and its API key in .env"
+      "No LLM configured. Set LLM_PROVIDER (agentrouter|apinex|codecraft|cleanapis|gemini|groq|openrouter|qwen) and its API key in .env"
     );
   }
 

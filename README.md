@@ -4,21 +4,6 @@ A self-hosted, from-scratch clone of **Meta's Muse** (renamed **Elio**) (launche
 that *does* tasks — browses the web, sends email, manages your calendar, researches and
 negotiates — with Muse's signature safety architecture rebuilt end-to-end:
 
-> **Live demo:** <https://elio-production-9b75.up.railway.app/landing> — sign in with
-> `demo@moltmoney.dev` / `DemoJudge2026!` (or create your own account). Prefer to run it
-> yourself? The quickstart below takes about five minutes and needs only a free LLM key.
-
-Elio is the **AI half** of the [MoltMoney](https://github.com/secure25/moltmoney)
-submission: MoltMoney is where PayPal lives — every purchase Elio decides on becomes a
-PayPal sandbox order created, approved and captured by MoltMoney, after Elio's Sentinel
-gate asks you first. Start with the
-[MoltMoney demo dashboard](https://moltmoneydashboard-production.up.railway.app): click
-**Explore the demo account** (`demo@moltmoney.dev` / `DemoJudge2026!`).
-
-**Telegram is optional.** Approvals appear in Elio's chat and on its `/approvals` page;
-connecting a Telegram bot only adds a second place to approve from, and every other
-feature works without it.
-
 | Muse concept | This clone |
 |---|---|
 | Muse Secure VM (per-user isolated agent computer) | Everything runs locally in this app; state in SQLite at `data/` |
@@ -32,15 +17,28 @@ feature works without it.
 | Works after you close the app | Tasks run server-side in a queue; results land back in the conversation |
 | One-time virtual cards | Vault surrogation + approval flow; final payment step is deliberately left to you |
 
+> **Live demo:** <https://elio-production-9b75.up.railway.app/landing> — sign in with
+> `demo@moltmoney.dev` / `DemoJudge2026!` (or create your own account).
+
+Elio is the **AI half** of the [MoltMoney](../..) submission: MoltMoney is where PayPal
+lives — every purchase Elio decides on becomes a PayPal sandbox order created, approved
+and captured by MoltMoney, after Elio's Sentinel gate asks you first. See the
+[monorepo README](../../README.md) for the PayPal flow and the demo accounts.
+
+**Telegram is optional.** Approvals appear in Elio's chat and on its `/approvals` page;
+connecting a Telegram bot only adds a second place to approve from, and every other
+feature works without it.
+
 ## Stack
 
 - **Next.js 15 + TypeScript + Tailwind** (App Router, Node runtime)
 - **SQLite via `node:sqlite`** — no native compilation needed
 - **LLM: pluggable adapter with automatic failover**
   - default: **Google Gemini** free tier (`gemini-flash-latest` alias, free API key from AI Studio)
-  - one-line swap: **Groq**, **OpenRouter**, **AgentRouter**, **APInex** or **Qwen** — every
-    OpenAI-compatible gateway is supported, and a provider that hits a quota wall or
-    runs out of credit cascades to the next configured one instead of failing the task
+  - one-line swap: **Groq**, **OpenRouter**, **AgentRouter**, **APInex**, **CodeCraft**,
+    **Clean APIs** or **Qwen** — every OpenAI-compatible gateway is supported, and a
+    provider that hits a quota wall or runs out of credit cascades to the next configured
+    one instead of failing the task
 - **Real integrations**: Gmail + Google Calendar (hand-rolled OAuth 2.0, REST), live web
   (fetch + DuckDuckGo search), real browser (Playwright)
 
@@ -63,6 +61,27 @@ GEMINI_API_KEY=your-key
 
 Prefer Groq or OpenRouter free models instead? Set `LLM_PROVIDER=groq` (+ `GROQ_API_KEY`)
 or `LLM_PROVIDER=openrouter` (+ `OPENROUTER_API_KEY`).
+
+A paid gateway (AgentRouter, APInex, CodeCraft, Clean APIs) plugs in the same way: set
+`LLM_PROVIDER` plus its key — and, for the gateways whose host is account-specific, the
+base URL it gives you. **AgentRouter quirks**, all handled by the adapter:
+
+- its models are served only through the OpenAI **Responses** API (`/v1/responses`), so
+  `/v1/chat/completions` answers "model … does not support /v1/chat/completions";
+- it rejects unrecognised HTTP clients with `401 unauthorized client detected` *before*
+  it checks the key, so the adapter sends a Claude-CLI-style `User-Agent`
+  (`AGENTROUTER_USER_AGENT` to override);
+- a request whose last item is a tool result comes back as an **empty message** (reasoning
+  tokens spent, no text, no tool call), which would end every tool-using task with
+  "(no content)" — the adapter appends a trailing `Continue.` turn after tool output so the
+  model answers normally.
+
+```
+LLM_PROVIDER=agentrouter
+AGENTROUTER_API_KEY=sk-…
+AGENTROUTER_BASE_URL=https://agentrouter.org/v1
+AGENTROUTER_MODEL=gpt-5.6-sol        # any model your account can reach (GET /v1/models)
+```
 
 ### 2. Vault secret (required)
 
@@ -274,6 +293,37 @@ npm run setup:browser  # optional Chromium for the browser agent
 npm run setup:voice    # optional Piper neural TTS (male en_US-ryan-medium, ~63 MB)
 ```
 
+## Living in the MoltMoney monorepo
+
+Elio ships as `apps/elio` inside the [MoltMoney monorepo](../../README.md) —
+the banking platform it (optionally) spends through. The quickstart above
+works as-is from this directory (it has its own `package.json`, SQLite
+database, and `.env`).
+
+### Connecting Elio to MoltMoney (optional, money tools)
+
+Create an agent in the MoltMoney dashboard; it issues a one-time,
+account-scoped API key. Then in `apps/elio/.env`:
+
+```
+MOLTMONEY_API_URL=http://localhost:3000
+MOLTMONEY_API_KEY=mm_…            # agent-scoped bearer token
+MOLTMONEY_ACCOUNT_ID=<uuid>       # the AGENT account (keys are account-scoped)
+```
+
+Every MoltMoney money-moving tool (`moltmoney_create_paypal_order`,
+`moltmoney_capture_paypal_order`, `moltmoney_send_payment`, …) is
+**Sentinel-gated**: pending approvals surface as cards in this app *and* are
+pushed to the MoltMoney dashboard / Telegram with Approve/Decline buttons.
+`MOLTMONEY_ENABLED=false` unregisters all MoltMoney tools (kill switch).
+
+A purchase ends in **PayPal**, not in this chat. `moltmoney_create_paypal_order`
+returns a live `sandbox.paypal.com/checkoutnow?token=…` URL, which Elio prints in
+its reply ("NEXT STEP — the USER must open this…"). The same URL is on the
+MoltMoney **Approvals** card and in the transaction's dialog, so either surface
+works. Opening it asks you to sign in as a PayPal **sandbox buyer** — that payer
+approval is PayPal's, not ours — and only then does capture settle the order.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see the root [LICENSE](../../LICENSE).
